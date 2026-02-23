@@ -634,6 +634,32 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 		}
 	}
 
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 29: Taint Check — Global Illicit Fund Detection (Sprint 1)
+	// Checks all input addresses against the seeded taint map.
+	// If any input has >25% taint exposure, sets FlagHighRisk.
+	// ════════════════════════════════════════════════════════════════════
+	taintLevel, isHighRisk := CheckInputsForTaint(tx)
+	if isHighRisk {
+		res.HeuristicFlags |= uint64(FlagHighRisk)
+		// Reduce privacy score — tainted funds are under active surveillance
+		res.PrivacyScore -= 15
+		if res.PrivacyScore < 0 {
+			res.PrivacyScore = 0
+		}
+	}
+	// Store taint level for risk assessment persistence
+	_ = taintLevel
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 30: Behavioral Bot Detection (Sprint 1)
+	// Structural heuristics for automated transaction patterns.
+	// Bots use: exact-round values, high fan-out, consolidation storms.
+	// ════════════════════════════════════════════════════════════════════
+	if detectBotBehavior(tx) {
+		res.HeuristicFlags |= uint64(FlagBotBehavior)
+	}
+
 	return res
 }
 
@@ -653,6 +679,46 @@ func countEqualInputValues(inputs []models.TxIn) int {
 		}
 	}
 	return maxCount
+}
+
+// detectBotBehavior identifies automated transaction patterns.
+// Bot signatures: exact-round values, high fan-out, identical output consolidation.
+// Returns true if the tx exhibits 2+ bot signals.
+func detectBotBehavior(tx models.Transaction) bool {
+	signals := 0
+
+	// Signal 1: Exact-round satoshi values (multiples of 1M sats = 0.01 BTC)
+	roundOutputs := 0
+	for _, out := range tx.Outputs {
+		if out.Value > 0 && out.Value%1000000 == 0 {
+			roundOutputs++
+		}
+	}
+	if roundOutputs >= 3 {
+		signals++
+	}
+
+	// Signal 2: High fan-out (>20 outputs suggests batch payment / distribution bot)
+	if len(tx.Outputs) > 20 {
+		signals++
+	}
+
+	// Signal 3: All outputs have identical value (distribution pattern)
+	if len(tx.Outputs) >= 3 {
+		firstVal := tx.Outputs[0].Value
+		allSame := true
+		for _, out := range tx.Outputs[1:] {
+			if out.Value != firstVal {
+				allSame = false
+				break
+			}
+		}
+		if allSame {
+			signals++
+		}
+	}
+
+	return signals >= 2
 }
 
 func min(a, b int) int {

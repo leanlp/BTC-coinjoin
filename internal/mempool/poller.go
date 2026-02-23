@@ -19,6 +19,8 @@ type Poller struct {
 	wsHub     *api.Hub
 	dbStore   *db.PostgresStore
 	seenTXs   map[string]bool
+	Watchlist *heuristics.AddressWatchlist
+	AlertMgr  *heuristics.AlertManager
 }
 
 // StreamPayload represents the real-time data sent to the dashboard UI
@@ -39,15 +41,38 @@ type StreamPayload struct {
 }
 
 func NewPoller(btcClient *bitcoin.Client, wsHub *api.Hub, dbStore *db.PostgresStore) *Poller {
+	watchlist := heuristics.GetGlobalAddressWatchlist()
+	alertMgr := heuristics.NewAlertManager(func(alert heuristics.Alert) {
+		if wsHub == nil {
+			return
+		}
+		payload, err := json.Marshal(map[string]interface{}{
+			"type":  "security_alert",
+			"alert": alert,
+		})
+		if err != nil {
+			log.Printf("[Poller] Failed to marshal security alert payload: %v", err)
+			return
+		}
+		wsHub.Broadcast(payload)
+	})
+
 	return &Poller{
 		btcClient: btcClient,
 		wsHub:     wsHub,
 		dbStore:   dbStore,
 		seenTXs:   make(map[string]bool),
+		Watchlist: watchlist,
+		AlertMgr:  alertMgr,
 	}
 }
 
 func (p *Poller) Run(ctx context.Context) {
+	if p.btcClient == nil {
+		log.Println("[Poller] Bitcoin client is nil; poller will not start")
+		return
+	}
+
 	log.Println("Starting Mempool CUDA Analytics Poller...")
 
 	ticker := time.NewTicker(3 * time.Second)
@@ -78,7 +103,7 @@ func (p *Poller) Run(ctx context.Context) {
 				currentHeight = int(count)
 			}
 
-			// Process up to 5 new transactions per tick to avoid lagging the node too much
+			// Process up to 20 new transactions per tick to avoid lagging the node too much
 			processedCount := 0
 			for _, txidStr := range mempool {
 				if p.seenTXs[txidStr] {
@@ -96,18 +121,21 @@ func (p *Poller) Run(ctx context.Context) {
 					continue
 				}
 
-				// Only process interesting transactions (>2 inputs/outputs) to limit noise on the dashboard and trigger heuristics
-				if len(rawTx.Vin) < 2 || len(rawTx.Vout) < 2 {
+				// Ignore malformed empty transactions only.
+				if len(rawTx.Vin) == 0 || len(rawTx.Vout) == 0 {
 					continue
 				}
 
 				// Map to internal format
 				tx := models.Transaction{
-					Txid:    rawTx.Txid,
-					Inputs:  make([]models.TxIn, len(rawTx.Vin)),
-					Outputs: make([]models.TxOut, len(rawTx.Vout)),
-					Weight:  int(rawTx.Weight),
-					Vsize:   int(rawTx.Vsize),
+					Txid:      rawTx.Txid,
+					Inputs:    make([]models.TxIn, len(rawTx.Vin)),
+					Outputs:   make([]models.TxOut, len(rawTx.Vout)),
+					Weight:    int(rawTx.Weight),
+					Vsize:     int(rawTx.Vsize),
+					Version:   int32(rawTx.Version),
+					LockTime:  rawTx.LockTime,
+					BlockTime: rawTx.Blocktime,
 				}
 
 				var totalIn, totalOut int64
@@ -127,11 +155,17 @@ func (p *Poller) Run(ctx context.Context) {
 						}
 					}
 					valSats := int64(inValue * 100000000)
+					scriptSigHex := ""
+					if vin.ScriptSig != nil {
+						scriptSigHex = vin.ScriptSig.Hex
+					}
 					tx.Inputs[i] = models.TxIn{
-						Txid:    vin.Txid,
-						Vout:    vin.Vout,
-						Value:   valSats,
-						Address: inAddr,
+						Txid:      vin.Txid,
+						Vout:      vin.Vout,
+						Value:     valSats,
+						Address:   inAddr,
+						ScriptSig: scriptSigHex,
+						Sequence:  vin.Sequence,
 					}
 					totalIn += valSats
 				}
@@ -143,8 +177,9 @@ func (p *Poller) Run(ctx context.Context) {
 						outAddr = vout.ScriptPubKey.Addresses[0]
 					}
 					tx.Outputs[i] = models.TxOut{
-						Value:   valSats,
-						Address: outAddr,
+						Value:        valSats,
+						Address:      outAddr,
+						ScriptPubKey: vout.ScriptPubKey.Hex,
 					}
 					totalOut += valSats
 				}
@@ -157,18 +192,26 @@ func (p *Poller) Run(ctx context.Context) {
 				// Measure CUDA / Engine processing time
 				start := time.Now()
 
-				// Re-using the engine's core analysis
+				// Re-using the engine's core 28-step analysis pipeline
 				result := heuristics.AnalyzeTx(tx)
 
 				elapsed := float64(time.Since(start).Microseconds()) / 1000.0
 
-				// Check if CUDA was likely used (heuristic: threshold topology usually triggers it)
-				// Now unconditionally true since we moved all processing to the GPU
+				// CUDA GPU acceleration (unconditionally enabled)
 				isCuda := true
+
+				// ── Phase 19: Real-Time Watchlist + Risk Scoring ────────
+				watchlistHits := p.Watchlist.CheckTransaction(tx)
+				assessment := heuristics.ScoreTransaction(tx, result, watchlistHits)
+				taintLevel, _ := heuristics.CheckInputsForTaint(tx)
+
+				// Emit alerts for medium+ severity
+				if assessment.Severity != "info" && assessment.Severity != "low" {
+					p.AlertMgr.EmitFromAssessment(assessment, watchlistHits)
+				}
 
 				// Persist CoinJoin detections to the isolated database
 				if p.dbStore != nil {
-					// Check if this transaction has any CoinJoin-related flags
 					isCoinJoinFlag := (result.HeuristicFlags&uint64(heuristics.FlagIsWhirlpoolStruct)) > 0 ||
 						(result.HeuristicFlags&uint64(heuristics.FlagIsWasabiSuspect)) > 0 ||
 						(result.HeuristicFlags&uint64(heuristics.FlagLikelyCollabConstruct)) > 0 ||
@@ -181,6 +224,23 @@ func (p *Poller) Run(ctx context.Context) {
 							log.Printf("[Poller] 🔍 CoinJoin detected and persisted: %s (flags: %d, anonset: %d)",
 								tx.Txid, result.HeuristicFlags, result.AnonSet)
 						}
+					}
+
+					// Sprint 1: Persist risk assessment for ALL transactions (not just CoinJoins)
+					// This enables scam investigation and entity-level risk across full history
+					riskLevel := assessment.Severity
+					if riskLevel == "" {
+						riskLevel = "info"
+					}
+					totalValue := int64(0)
+					for _, out := range tx.Outputs {
+						totalValue += out.Value
+					}
+					if err := p.dbStore.SaveRiskAssessment(ctx, currentHeight, tx.Txid,
+						assessment.RiskScore, riskLevel, result.PrivacyScore, result.HeuristicFlags,
+						taintLevel,
+						len(tx.Inputs), len(tx.Outputs), totalValue); err != nil {
+						log.Printf("[Poller] Failed to persist risk assessment: %v", err)
 					}
 				}
 
@@ -204,7 +264,7 @@ func (p *Poller) Run(ctx context.Context) {
 				p.wsHub.Broadcast(payloadBytes)
 
 				processedCount++
-				if processedCount >= 5 {
+				if processedCount >= 20 {
 					break
 				}
 			}

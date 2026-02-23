@@ -61,10 +61,10 @@ func TestEvaluateFactorGraph_CorrelatedEdges(t *testing.T) {
 func TestEvaluateFactorGraph_MixedGroups(t *testing.T) {
 	// Realistic scenario: 2 independent groups, one with correlated edges
 	edges := []models.EvidenceEdge{
-		{EdgeType: 1, LLRScore: 1.28, DependencyGroup: 0},  // CIOH (independent)
-		{EdgeType: 2, LLRScore: 0.60, DependencyGroup: 1},  // Script (group 1)
-		{EdgeType: 2, LLRScore: 0.80, DependencyGroup: 1},  // Script (group 1, correlated)
-		{EdgeType: 3, LLRScore: -2.0, DependencyGroup: 3},  // Negative gating (independent)
+		{EdgeType: 1, LLRScore: 1.28, DependencyGroup: 0}, // CIOH (independent)
+		{EdgeType: 2, LLRScore: 0.60, DependencyGroup: 1}, // Script (group 1)
+		{EdgeType: 2, LLRScore: 0.80, DependencyGroup: 1}, // Script (group 1, correlated)
+		{EdgeType: 3, LLRScore: -2.0, DependencyGroup: 3}, // Negative gating (independent)
 	}
 
 	result := EvaluateFactorGraph(edges)
@@ -75,9 +75,11 @@ func TestEvaluateFactorGraph_MixedGroups(t *testing.T) {
 		t.Errorf("Expected posterior %.2f. Got: %.2f", expected, result.PosteriorLLR)
 	}
 
-	// Negative gating (CoinJoin) overwhelms the positive evidence
-	if result.ConfidenceLevel != "rejected" {
-		t.Errorf("Expected 'rejected' due to negative gating. Got: %s", result.ConfidenceLevel)
+	// Negative gating nearly cancels the positive evidence (0.08 ≈ negligible)
+	// "negligible" = near-zero LLR, insufficient evidence either way
+	// "rejected" would mean strong COUNTER-evidence (LLR < -0.5)
+	if result.ConfidenceLevel != "negligible" {
+		t.Errorf("Expected 'negligible' — net evidence is near zero (0.08). Got: %s", result.ConfidenceLevel)
 	}
 
 	if result.DiscountedEdges != 1 {

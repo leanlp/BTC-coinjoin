@@ -2,6 +2,7 @@ package heuristics
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math"
 
@@ -123,15 +124,17 @@ func GenerateCIOHEdges(tx models.Transaction, isCoinJoin bool, currentHeight int
 		return edges // Nothing to cluster
 	}
 
-	// 1. If it IS a CoinJoin, we must apply a Negative Gating Edge instead of connecting inputs.
+	// 1. If it IS a CoinJoin, we must apply NEGATIVE Gating Edges to prevent
+	//    CIOH clustering. Negative LLR = evidence AGAINST same-entity hypothesis.
 	if isCoinJoin {
 		for _, in := range tx.Inputs {
 			// Hard negative edge: CIOH Invalidated
+			// NEGATIVE LLR: pushes posterior AWAY from clustering
 			edges = append(edges, createEdge(
 				in.Address,
 				"Mixer_Coordinator",
 				EdgeTypeCIOHInvalidated,
-				ProbToLLR(0.99), // High certainty this breaks CIOH
+				-ProbToLLR(0.99), // -2.0: strong evidence AGAINST clustering
 				DepGroupCoordination,
 				currentHeight,
 			))
@@ -140,7 +143,7 @@ func GenerateCIOHEdges(tx models.Transaction, isCoinJoin bool, currentHeight int
 				in.Address,
 				"Mixer_Coordinator",
 				EdgeTypeCoinjoinSuspected,
-				ProbToLLR(0.85),
+				-ProbToLLR(0.85), // -0.75: moderate evidence AGAINST clustering
 				DepGroupCoordination,
 				currentHeight,
 			))
@@ -187,8 +190,8 @@ func createEdge(src, dst string, edgeType int, llr float64, depGroup int, height
 
 	// Create immutable audit hash representing this exact inference state
 	hashPayload := fmt.Sprintf("%s|%s|%s|%d|%f|%d|%d", edgeID, src, dst, edgeType, llr, depGroup, CurrentSnapshotID)
-	// Execute the hash to ensure logic is correct, even if not stored yet.
-	_ = sha256.Sum256([]byte(hashPayload))
+	auditHash := sha256.Sum256([]byte(hashPayload))
+	auditHashHex := hex.EncodeToString(auditHash[:])
 
 	return models.EvidenceEdge{
 		EdgeID:          edgeID,
@@ -199,6 +202,6 @@ func createEdge(src, dst string, edgeType int, llr float64, depGroup int, height
 		LLRScore:        llr,
 		DependencyGroup: depGroup,
 		SnapshotID:      CurrentSnapshotID,
-		// In a real system, we would store `hex.EncodeToString(hash[:])` in the DB
+		AuditHash:       auditHashHex,
 	}
 }

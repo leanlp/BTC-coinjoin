@@ -8,6 +8,7 @@ import (
 	"github.com/rawblock/coinjoin-engine/internal/api"
 	"github.com/rawblock/coinjoin-engine/internal/bitcoin"
 	"github.com/rawblock/coinjoin-engine/internal/db"
+	"github.com/rawblock/coinjoin-engine/internal/heuristics"
 	"github.com/rawblock/coinjoin-engine/internal/mempool"
 	"github.com/rawblock/coinjoin-engine/internal/scanner"
 )
@@ -54,14 +55,47 @@ func main() {
 	wsHub := api.NewHub()
 	go wsHub.Run()
 
-	// Setup and start the Mempool Poller
-	poller := mempool.NewPoller(btcClient, wsHub, dbConn)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go poller.Run(ctx)
+	// Sprint 1: Initialize global taint map for risk detection
+	heuristics.InitGlobalTaintMap()
+	watchlist := heuristics.GetGlobalAddressWatchlist()
+	if dbConn != nil {
+		seeds, err := dbConn.LoadActiveInvestigationSeeds(context.Background())
+		if err != nil {
+			log.Printf("Warning: failed to warm-load investigation seeds: %v", err)
+		} else if len(seeds) > 0 {
+			sources := make([]heuristics.TaintSource, 0, len(seeds))
+			for _, seed := range seeds {
+				label := seed.Label
+				if label == "" {
+					label = seed.Name
+				}
+				watchlist.Add(seed.Address, seed.Role, label, seed.CaseID, heuristics.AlertLevelForRole(seed.Role))
+				sources = append(sources, heuristics.TaintSource{
+					Address:    seed.Address,
+					Category:   seed.Role,
+					TaintLevel: heuristics.TaintLevelForRole(seed.Role),
+					Label:      label,
+				})
+			}
+			heuristics.SeedFromExternalIntel(sources)
+			log.Printf("Warm-loaded %d investigation seeds into watchlist/taint map", len(seeds))
+		}
+	}
 
-	// Create the Historical Block Scanner with real-time WebSocket alert broadcasting
-	blockScanner := scanner.NewBlockScanner(btcClient, dbConn, api.BroadcastCoinJoinAlert(wsHub))
+	// Setup and start the Mempool Poller + Block Scanner
+	// GUARD: Only start if btcClient is non-nil to avoid runtime panic
+	var blockScanner *scanner.BlockScanner
+	if btcClient != nil {
+		poller := mempool.NewPoller(btcClient, wsHub, dbConn)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go poller.Run(ctx)
+
+		// Create the Historical Block Scanner with real-time WebSocket alert broadcasting
+		blockScanner = scanner.NewBlockScanner(btcClient, dbConn, api.BroadcastCoinJoinAlert(wsHub))
+	} else {
+		log.Println("WARNING: Bitcoin RPC unavailable — engine running in API-only mode (no poller/scanner)")
+	}
 
 	// Setup the Gin Router
 	r := api.SetupRouter(dbConn, btcClient, wsHub, blockScanner)

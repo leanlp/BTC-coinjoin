@@ -2,16 +2,17 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/gin-gonic/gin"
 	"github.com/rawblock/coinjoin-engine/internal/bitcoin"
 	"github.com/rawblock/coinjoin-engine/internal/db"
@@ -20,11 +21,38 @@ import (
 	"github.com/rawblock/coinjoin-engine/pkg/models"
 )
 
+// maxScanBlocks caps the block range for a single scan job to prevent
+// runaway resource exhaustion from unconstrained requests.
+const maxScanBlocks int64 = 50_000
+
+// btcToSats converts a float64 BTC value to satoshis using btcutil.NewAmount
+// which performs correct IEEE-754 rounding instead of naive float multiplication.
+func btcToSats(btc float64) int64 {
+	amt, err := btcutil.NewAmount(btc)
+	if err != nil {
+		return 0
+	}
+	return int64(amt)
+}
+
+// cryptoRandFloat64 returns a cryptographically random float64 in [0, 1).
+func cryptoRandFloat64() float64 {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Extremely unlikely — fallback to a fixed mid-range value.
+		return 0.5
+	}
+	n := binary.BigEndian.Uint64(b) >> 11 // 53-bit mantissa
+	return float64(n) / float64(1<<53)
+}
+
+
 type APIHandler struct {
 	dbStore      *db.PostgresStore
 	btcClient    *bitcoin.Client
 	wsHub        *Hub
 	blockScanner *scanner.BlockScanner
+	invManager   *heuristics.InvestigationManager
 }
 
 func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hub, blockScanner *scanner.BlockScanner) *gin.Engine {
@@ -58,19 +86,47 @@ func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hu
 		c.Next()
 	})
 
-	handler := &APIHandler{dbStore: dbStore, btcClient: btcClient, wsHub: wsHub, blockScanner: blockScanner}
+	handler := &APIHandler{
+		dbStore:      dbStore,
+		btcClient:    btcClient,
+		wsHub:        wsHub,
+		blockScanner: blockScanner,
+		invManager:   heuristics.NewInvestigationManager(),
+	}
 
-	api := r.Group("/api/v1")
+	// ── Public endpoints (no auth) ─────────────────────────────
+	pub := r.Group("/api/v1")
 	{
-		api.GET("/analyze/:txid", handler.handleAnalyzeTx)
-		api.POST("/cluster/evaluate", handler.handleEvaluateCluster)
-		api.GET("/mixers", handler.handleGetMixers)
-		api.GET("/health", handler.handleHealth)
-		api.GET("/stream", wsHub.Subscribe)
+		pub.GET("/health", handler.handleHealth)
+		pub.GET("/stream", wsHub.Subscribe)
+		pub.GET("/mixers", handler.handleGetMixers)
+		pub.GET("/scan/progress", handler.handleScanProgress)
+	}
+
+	// ── Protected endpoints (require bearer token if API_AUTH_TOKEN set) ──
+	auth := r.Group("/api/v1")
+	auth.Use(AuthMiddleware())
+	// Rate-limit protected endpoints to 30 req/min per IP (burst=5).
+	// The /analyze/:txid endpoint performs O(n) RPC calls — especially important here.
+	auth.Use(NewRateLimiter(30, 5).Middleware())
+	{
+		auth.GET("/analyze/:txid", handler.handleAnalyzeTx)
+		auth.POST("/cluster/evaluate", handler.handleEvaluateCluster)
 
 		// Historical Block Scanner
-		api.POST("/scan", handler.handleStartScan)
-		api.GET("/scan/progress", handler.handleScanProgress)
+		auth.POST("/scan", handler.handleStartScan)
+
+		// ── Incident Response & Fund Tracking (Phase 18) ──────────
+		inv := auth.Group("/investigation")
+		{
+			inv.POST("", handler.handleCreateInvestigation)
+			inv.GET("/:id", handler.handleGetInvestigation)
+			inv.POST("/:id/trace", handler.handleRunTrace)
+			inv.GET("/:id/graph", handler.handleGetFlowGraph)
+			inv.POST("/:id/tag", handler.handleTagAddress)
+			inv.GET("/:id/timeline", handler.handleGetTimeline)
+			inv.GET("/:id/exits", handler.handleGetExchangeExits)
+		}
 	}
 
 	// Serve Static Dashboard
@@ -84,10 +140,18 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 
 	var tx models.Transaction
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 	if txid == "whirlpool" || txid == "mix" {
-		// Generate a perfect 5x5 Whirlpool Mix
+		// Synthetic modes are gated in production to prevent data poisoning
+		if !IsSyntheticEnabled() {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "Synthetic transaction modes are disabled in production",
+				"hint":  "Set ENABLE_SYNTHETIC=true to enable test data generation",
+			})
+			return
+		}
+
+		// Generate a perfect 5x5 Whirlpool Mix.
+		// Uses crypto/rand so synthetic outputs are not predictable.
 		tx = models.Transaction{
 			Txid:    txid,
 			Inputs:  make([]models.TxIn, 5),
@@ -95,7 +159,9 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 		}
 
 		for i := 0; i < 5; i++ {
-			tx.Inputs[i] = models.TxIn{Value: int64((rng.Float64()*0.4 + 0.06) * 100000000), Address: "bc1q_in"}
+			// Random value in [0.06, 0.46) BTC converted with integer precision.
+			btcFrac := cryptoRandFloat64()*0.4 + 0.06
+			tx.Inputs[i] = models.TxIn{Value: btcToSats(btcFrac), Address: "bc1q_in"}
 			tx.Outputs[i] = models.TxOut{Value: 5000000, Address: "bc1q_out"}
 		}
 
@@ -119,14 +185,18 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 		}
 
 		tx = models.Transaction{
-			Txid:    rawTx.Txid,
-			Inputs:  make([]models.TxIn, len(rawTx.Vin)),
-			Outputs: make([]models.TxOut, len(rawTx.Vout)),
-			Weight:  int(rawTx.Weight),
-			Vsize:   int(rawTx.Vsize),
+			Txid:      rawTx.Txid,
+			Inputs:    make([]models.TxIn, len(rawTx.Vin)),
+			Outputs:   make([]models.TxOut, len(rawTx.Vout)),
+			Weight:    int(rawTx.Weight),
+			Vsize:     int(rawTx.Vsize),
+			Version:   int32(rawTx.Version),
+			LockTime:  rawTx.LockTime,
+			BlockTime: rawTx.Blocktime,
 		}
 
 		// Calculate Fee: Sum(Inputs) - Sum(Outputs)
+		// Accumulated in float64 then converted once to minimise rounding.
 		var totalIn, totalOut float64
 
 		// Note: GetRawTransactionVerbose does not return input values directly (vin just has txid/vout).
@@ -151,11 +221,17 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 			}
 
 			totalIn += inValue
+			scriptSigHex := ""
+			if vin.ScriptSig != nil {
+				scriptSigHex = vin.ScriptSig.Hex
+			}
 			tx.Inputs[i] = models.TxIn{
-				Txid:    vin.Txid,
-				Vout:    vin.Vout,
-				Value:   int64(inValue * 100000000), // Convert BTC to Satoshis
-				Address: inAddr,
+				Txid:      vin.Txid,
+				Vout:      vin.Vout,
+				Value:     btcToSats(inValue), // integer-safe BTC→sat conversion
+				Address:   inAddr,
+				ScriptSig: scriptSigHex,
+				Sequence:  vin.Sequence,
 			}
 		}
 
@@ -166,8 +242,9 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 				outAddr = vout.ScriptPubKey.Addresses[0]
 			}
 			tx.Outputs[i] = models.TxOut{
-				Value:   int64(vout.Value * 100000000),
-				Address: outAddr,
+				Value:        btcToSats(vout.Value), // integer-safe BTC→sat conversion
+				Address:      outAddr,
+				ScriptPubKey: vout.ScriptPubKey.Hex,
 			}
 		}
 
@@ -176,6 +253,9 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 
 	// 2. Run the Heuristics Engine Analysis
 	result := heuristics.AnalyzeTx(tx)
+	watchlistHits := heuristics.GetGlobalAddressWatchlist().CheckTransaction(tx)
+	assessment := heuristics.ScoreTransaction(tx, result, watchlistHits)
+	taintLevel, _ := heuristics.CheckInputsForTaint(tx)
 
 	// 3. Persist to DB if connected
 	if h.dbStore != nil {
@@ -189,12 +269,28 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 		if err := h.dbStore.SaveAnalysisResult(context.Background(), blockHeight, result); err != nil {
 			log.Printf("Failed to save analysis result to DB: %v", err)
 		}
+
+		totalValue := int64(0)
+		for _, out := range tx.Outputs {
+			totalValue += out.Value
+		}
+		riskLevel := assessment.Severity
+		if riskLevel == "" {
+			riskLevel = "info"
+		}
+		if err := h.dbStore.SaveRiskAssessment(context.Background(), blockHeight, tx.Txid,
+			assessment.RiskScore, riskLevel, result.PrivacyScore, result.HeuristicFlags,
+			taintLevel, len(tx.Inputs), len(tx.Outputs), totalValue); err != nil {
+			log.Printf("Failed to save risk assessment to DB: %v", err)
+		}
 	}
 
 	// 4. Return JSON payload
 	c.JSON(http.StatusOK, gin.H{
-		"tx":       tx,
-		"analysis": result,
+		"tx":               tx,
+		"analysis":         result,
+		"threatAssessment": assessment,
+		"watchlistHits":    watchlistHits,
 	})
 }
 
@@ -285,6 +381,15 @@ func (h *APIHandler) handleStartScan(c *gin.Context) {
 	// Validate range
 	if req.StartHeight <= 0 || req.EndHeight <= 0 || req.StartHeight > req.EndHeight {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid block range"})
+		return
+	}
+	// Cap the range to prevent unbounded background resource consumption.
+	if req.EndHeight-req.StartHeight > maxScanBlocks {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "Block range too large",
+			"maxBlocks": maxScanBlocks,
+			"hint":   "Split into multiple smaller requests",
+		})
 		return
 	}
 

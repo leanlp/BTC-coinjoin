@@ -27,8 +27,9 @@ import (
 // signals, and summing independent LLR contributions.
 //
 // Mathematical basis:
-//   posterior_LLR = sum of max(LLR per group)
-//   rather than:   sum of ALL LLRs (which double-counts)
+//
+//	posterior_LLR = sum of max(LLR per group)
+//	rather than:   sum of ALL LLRs (which double-counts)
 func EvaluateFactorGraph(edges []models.EvidenceEdge) models.InferenceResult {
 	if len(edges) == 0 {
 		return models.InferenceResult{
@@ -83,20 +84,26 @@ func EvaluateFactorGraph(edges []models.EvidenceEdge) models.InferenceResult {
 }
 
 // classifyConfidence maps the posterior LLR to a human-readable confidence band.
-// Based on Jeffrey's scale for evidence strength:
-//   |LLR| > 2.0  → "high"     (decisive evidence)
-//   |LLR| > 1.0  → "medium"   (strong evidence)
-//   |LLR| > 0.5  → "low"      (moderate evidence)
-//   |LLR| <= 0.5 → "rejected" (insufficient evidence)
+// Based on Jeffrey's scale for evidence strength.
+//
+// IMPORTANT: Uses raw (signed) LLR, NOT abs(LLR).
+// Negative LLR = evidence AGAINST clustering → must not return "high".
+//
+//	LLR > 2.0   → "high"       (decisive FOR clustering)
+//	LLR > 1.0   → "medium"     (strong FOR clustering)
+//	LLR > 0.5   → "low"        (moderate FOR clustering)
+//	LLR > -0.5  → "negligible" (insufficient evidence either way)
+//	LLR <= -0.5 → "rejected"   (evidence AGAINST clustering)
 func classifyConfidence(llr float64) string {
-	absLLR := math.Abs(llr)
 	switch {
-	case absLLR > 2.0:
+	case llr > 2.0:
 		return "high"
-	case absLLR > 1.0:
+	case llr > 1.0:
 		return "medium"
-	case absLLR > 0.5:
+	case llr > 0.5:
 		return "low"
+	case llr > -0.5:
+		return "negligible"
 	default:
 		return "rejected"
 	}
@@ -111,9 +118,14 @@ func classifyConfidence(llr float64) string {
 func ComputeClusterPosterior(edges []models.EvidenceEdge) (bool, float64) {
 	result := EvaluateFactorGraph(edges)
 
-	// A cluster is materialized only if the posterior confidence is "medium" or higher
-	// This prevents cluster collapse from weak/correlated evidence
-	shouldCluster := result.ConfidenceLevel == "high" || result.ConfidenceLevel == "medium"
+	// A cluster is materialized only if:
+	//   1. The posterior LLR is POSITIVE (net evidence FOR clustering)
+	//   2. The confidence level is "medium" or higher
+	// This prevents cluster collapse from:
+	//   - Weak/correlated evidence (confidence gate)
+	//   - Negative evidence that was previously misread as "high" due to abs() bug
+	shouldCluster := result.PosteriorLLR > 0 &&
+		(result.ConfidenceLevel == "high" || result.ConfidenceLevel == "medium")
 
 	return shouldCluster, result.PosteriorLLR
 }

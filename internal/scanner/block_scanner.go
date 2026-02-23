@@ -21,6 +21,7 @@ type BlockScanner struct {
 	btcClient *bitcoin.Client
 	dbStore   *db.PostgresStore
 	alertFunc func(alert CoinJoinAlert) // Optional broadcast callback
+	watchlist *heuristics.AddressWatchlist
 
 	// Progress tracking (atomic for safe concurrent reads)
 	currentHeight  atomic.Int64
@@ -55,6 +56,7 @@ func NewBlockScanner(btcClient *bitcoin.Client, dbStore *db.PostgresStore, alert
 		btcClient: btcClient,
 		dbStore:   dbStore,
 		alertFunc: alertFunc,
+		watchlist: heuristics.GetGlobalAddressWatchlist(),
 	}
 }
 
@@ -71,6 +73,11 @@ func (s *BlockScanner) GetProgress() ScanProgress {
 // ScanRange processes a specific block range asynchronously.
 // It analyzes every transaction in each block and persists CoinJoin detections.
 func (s *BlockScanner) ScanRange(ctx context.Context, startHeight, endHeight int64) {
+	if s.btcClient == nil {
+		log.Println("[BlockScanner] Bitcoin client is nil; scan request ignored")
+		return
+	}
+
 	if s.isRunning.Load() {
 		log.Println("[BlockScanner] Scan already in progress, ignoring duplicate request")
 		return
@@ -142,19 +149,23 @@ func (s *BlockScanner) scanBlock(ctx context.Context, height int64) {
 			continue
 		}
 
-		// Only analyze transactions with ≥2 inputs and ≥2 outputs (interesting topology)
-		if len(rawTx.Vin) < 2 || len(rawTx.Vout) < 2 {
+		// Ignore malformed empty transactions only.
+		if len(rawTx.Vin) == 0 || len(rawTx.Vout) == 0 {
 			s.totalScanned.Add(1)
 			continue
 		}
 
 		// Map to internal format
 		tx := models.Transaction{
-			Txid:    rawTx.Txid,
-			Inputs:  make([]models.TxIn, len(rawTx.Vin)),
-			Outputs: make([]models.TxOut, len(rawTx.Vout)),
-			Weight:  int(rawTx.Weight),
-			Vsize:   int(rawTx.Vsize),
+			Txid:        rawTx.Txid,
+			Inputs:      make([]models.TxIn, len(rawTx.Vin)),
+			Outputs:     make([]models.TxOut, len(rawTx.Vout)),
+			Weight:      int(rawTx.Weight),
+			Vsize:       int(rawTx.Vsize),
+			Version:     int32(rawTx.Version),
+			LockTime:    rawTx.LockTime,
+			BlockTime:   rawTx.Blocktime,
+			BlockHeight: int(height),
 		}
 
 		var totalIn, totalOut int64
@@ -175,11 +186,17 @@ func (s *BlockScanner) scanBlock(ctx context.Context, height int64) {
 				}
 			}
 			valSats := int64(inValue * 100000000)
+			scriptSigHex := ""
+			if vin.ScriptSig != nil {
+				scriptSigHex = vin.ScriptSig.Hex
+			}
 			tx.Inputs[i] = models.TxIn{
-				Txid:    vin.Txid,
-				Vout:    vin.Vout,
-				Value:   valSats,
-				Address: inAddr,
+				Txid:      vin.Txid,
+				Vout:      vin.Vout,
+				Value:     valSats,
+				Address:   inAddr,
+				ScriptSig: scriptSigHex,
+				Sequence:  vin.Sequence,
 			}
 			totalIn += valSats
 		}
@@ -206,6 +223,28 @@ func (s *BlockScanner) scanBlock(ctx context.Context, height int64) {
 		// Run the heuristics engine
 		result := heuristics.AnalyzeTx(tx)
 		s.totalScanned.Add(1)
+
+		watchlistHits := s.watchlist.CheckTransaction(tx)
+		assessment := heuristics.ScoreTransaction(tx, result, watchlistHits)
+		taintLevel, _ := heuristics.CheckInputsForTaint(tx)
+
+		// Persist risk assessment for ALL analyzed transactions.
+		if s.dbStore != nil {
+			totalValue := int64(0)
+			for _, out := range tx.Outputs {
+				totalValue += out.Value
+			}
+			riskLevel := assessment.Severity
+			if riskLevel == "" {
+				riskLevel = "info"
+			}
+
+			if err := s.dbStore.SaveRiskAssessment(ctx, int(height), tx.Txid,
+				assessment.RiskScore, riskLevel, result.PrivacyScore, result.HeuristicFlags,
+				taintLevel, len(tx.Inputs), len(tx.Outputs), totalValue); err != nil {
+				log.Printf("[BlockScanner] Risk persistence error at block %d tx %s: %v", height, rawTx.Txid, err)
+			}
+		}
 
 		// Persist only CoinJoin-flagged transactions
 		isCoinJoin := (result.HeuristicFlags&uint64(heuristics.FlagIsWhirlpoolStruct)) > 0 ||
