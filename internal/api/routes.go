@@ -67,20 +67,27 @@ func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hu
 		invManager:   heuristics.NewInvestigationManager(),
 	}
 
-	api := r.Group("/api/v1")
+	// ── Public endpoints (no auth) ─────────────────────────────
+	pub := r.Group("/api/v1")
 	{
-		api.GET("/analyze/:txid", handler.handleAnalyzeTx)
-		api.POST("/cluster/evaluate", handler.handleEvaluateCluster)
-		api.GET("/mixers", handler.handleGetMixers)
-		api.GET("/health", handler.handleHealth)
-		api.GET("/stream", wsHub.Subscribe)
+		pub.GET("/health", handler.handleHealth)
+		pub.GET("/stream", wsHub.Subscribe)
+		pub.GET("/mixers", handler.handleGetMixers)
+		pub.GET("/scan/progress", handler.handleScanProgress)
+	}
+
+	// ── Protected endpoints (require bearer token if API_AUTH_TOKEN set) ──
+	auth := r.Group("/api/v1")
+	auth.Use(AuthMiddleware())
+	{
+		auth.GET("/analyze/:txid", handler.handleAnalyzeTx)
+		auth.POST("/cluster/evaluate", handler.handleEvaluateCluster)
 
 		// Historical Block Scanner
-		api.POST("/scan", handler.handleStartScan)
-		api.GET("/scan/progress", handler.handleScanProgress)
+		auth.POST("/scan", handler.handleStartScan)
 
 		// ── Incident Response & Fund Tracking (Phase 18) ──────────
-		inv := api.Group("/investigation")
+		inv := auth.Group("/investigation")
 		{
 			inv.POST("", handler.handleCreateInvestigation)
 			inv.GET("/:id", handler.handleGetInvestigation)
@@ -106,6 +113,15 @@ func (h *APIHandler) handleAnalyzeTx(c *gin.Context) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	if txid == "whirlpool" || txid == "mix" {
+		// Synthetic modes are gated in production to prevent data poisoning
+		if !IsSyntheticEnabled() {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "Synthetic transaction modes are disabled in production",
+				"hint":  "Set ENABLE_SYNTHETIC=true to enable test data generation",
+			})
+			return
+		}
+
 		// Generate a perfect 5x5 Whirlpool Mix
 		tx = models.Transaction{
 			Txid:    txid,

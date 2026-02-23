@@ -200,3 +200,29 @@ func (s *PostgresStore) GetMixers(ctx context.Context, page int, limit int) ([]M
 func (s *PostgresStore) GetPool() *pgxpool.Pool {
 	return s.pool
 }
+
+// SaveRiskAssessment persists the risk assessment for ANY analyzed transaction.
+// Unlike SaveAnalysisResult (which only stores CoinJoin-flagged txs), this
+// stores a risk row for every tx processed by the pipeline, enabling
+// scam investigation and entity-level risk scoring.
+func (s *PostgresStore) SaveRiskAssessment(ctx context.Context, blockHeight int, txid string,
+	riskScore int, riskLevel string, privacyScore int, flags uint64,
+	taintLevel float64, numInputs, numOutputs int, totalValueSats int64) error {
+
+	sql := `
+		INSERT INTO risk_assessments
+			(txid, block_height, risk_score, risk_level, privacy_score, heuristic_flags,
+			 taint_level, num_inputs, num_outputs, total_value_sats)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (txid) DO UPDATE SET
+			risk_score = EXCLUDED.risk_score,
+			risk_level = EXCLUDED.risk_level,
+			privacy_score = EXCLUDED.privacy_score,
+			heuristic_flags = EXCLUDED.heuristic_flags,
+			taint_level = EXCLUDED.taint_level,
+			analyzed_at = NOW();
+	`
+	_, err := s.pool.Exec(ctx, sql, txid, blockHeight, riskScore, riskLevel,
+		privacyScore, int64(flags), taintLevel, numInputs, numOutputs, totalValueSats)
+	return err
+}

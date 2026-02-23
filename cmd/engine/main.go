@@ -8,6 +8,7 @@ import (
 	"github.com/rawblock/coinjoin-engine/internal/api"
 	"github.com/rawblock/coinjoin-engine/internal/bitcoin"
 	"github.com/rawblock/coinjoin-engine/internal/db"
+	"github.com/rawblock/coinjoin-engine/internal/heuristics"
 	"github.com/rawblock/coinjoin-engine/internal/mempool"
 	"github.com/rawblock/coinjoin-engine/internal/scanner"
 )
@@ -54,14 +55,23 @@ func main() {
 	wsHub := api.NewHub()
 	go wsHub.Run()
 
-	// Setup and start the Mempool Poller
-	poller := mempool.NewPoller(btcClient, wsHub, dbConn)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go poller.Run(ctx)
+	// Sprint 1: Initialize global taint map for risk detection
+	heuristics.InitGlobalTaintMap()
 
-	// Create the Historical Block Scanner with real-time WebSocket alert broadcasting
-	blockScanner := scanner.NewBlockScanner(btcClient, dbConn, api.BroadcastCoinJoinAlert(wsHub))
+	// Setup and start the Mempool Poller + Block Scanner
+	// GUARD: Only start if btcClient is non-nil to avoid runtime panic
+	var blockScanner *scanner.BlockScanner
+	if btcClient != nil {
+		poller := mempool.NewPoller(btcClient, wsHub, dbConn)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go poller.Run(ctx)
+
+		// Create the Historical Block Scanner with real-time WebSocket alert broadcasting
+		blockScanner = scanner.NewBlockScanner(btcClient, dbConn, api.BroadcastCoinJoinAlert(wsHub))
+	} else {
+		log.Println("WARNING: Bitcoin RPC unavailable — engine running in API-only mode (no poller/scanner)")
+	}
 
 	// Setup the Gin Router
 	r := api.SetupRouter(dbConn, btcClient, wsHub, blockScanner)

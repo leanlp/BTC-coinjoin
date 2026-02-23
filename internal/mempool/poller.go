@@ -196,6 +196,23 @@ func (p *Poller) Run(ctx context.Context) {
 								tx.Txid, result.HeuristicFlags, result.AnonSet)
 						}
 					}
+
+					// Sprint 1: Persist risk assessment for ALL transactions (not just CoinJoins)
+					// This enables scam investigation and entity-level risk across full history
+					riskLevel := assessment.Severity
+					if riskLevel == "" {
+						riskLevel = "info"
+					}
+					totalValue := int64(0)
+					for _, out := range tx.Outputs {
+						totalValue += out.Value
+					}
+					if err := p.dbStore.SaveRiskAssessment(ctx, currentHeight, tx.Txid,
+						assessment.RiskScore, riskLevel, result.PrivacyScore, result.HeuristicFlags,
+						0.0, // taintLevel — populated when taint seed is loaded
+						len(tx.Inputs), len(tx.Outputs), totalValue); err != nil {
+						log.Printf("[Poller] Failed to persist risk assessment: %v", err)
+					}
 				}
 
 				payload := StreamPayload{

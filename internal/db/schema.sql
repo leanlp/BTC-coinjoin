@@ -114,3 +114,27 @@ CREATE TABLE IF NOT EXISTS fund_flows (
 CREATE INDEX IF NOT EXISTS idx_fund_flows_investigation ON fund_flows (investigation_id);
 CREATE INDEX IF NOT EXISTS idx_fund_flows_from ON fund_flows (from_address);
 CREATE INDEX IF NOT EXISTS idx_fund_flows_to ON fund_flows (to_address);
+
+-- ============================================================
+-- Risk Assessments (Sprint 1 — persist ALL analyzed txs)
+-- ============================================================
+-- Every analyzed transaction gets a risk row, not just CoinJoins.
+-- This enables scam investigation, taint tracking, and entity risk scoring.
+CREATE TABLE IF NOT EXISTS risk_assessments (
+    txid              VARCHAR(64) PRIMARY KEY,
+    block_height      INT NOT NULL,
+    risk_score        SMALLINT NOT NULL DEFAULT 0,   -- 0-100 composite threat score
+    risk_level        VARCHAR(20) NOT NULL DEFAULT 'info',  -- info/low/medium/high/critical
+    privacy_score     SMALLINT NOT NULL DEFAULT 50,  -- 0-100 privacy score from pipeline
+    heuristic_flags   BIGINT NOT NULL DEFAULT 0,     -- Full 64-bit flag bitmask
+    taint_level       REAL DEFAULT 0.0,              -- 0.0 (clean) to 1.0 (fully tainted)
+    num_inputs        INT DEFAULT 0,
+    num_outputs       INT DEFAULT 0,
+    total_value_sats  BIGINT DEFAULT 0,
+    analyzed_at       TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_risk_assessments_level ON risk_assessments (risk_level);
+CREATE INDEX IF NOT EXISTS idx_risk_assessments_score ON risk_assessments (risk_score DESC);
+CREATE INDEX IF NOT EXISTS idx_risk_assessments_height ON risk_assessments USING BRIN (block_height);
+
