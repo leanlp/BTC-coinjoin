@@ -25,6 +25,7 @@ type APIHandler struct {
 	btcClient    *bitcoin.Client
 	wsHub        *Hub
 	blockScanner *scanner.BlockScanner
+	invManager   *heuristics.InvestigationManager
 }
 
 func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hub, blockScanner *scanner.BlockScanner) *gin.Engine {
@@ -58,7 +59,13 @@ func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hu
 		c.Next()
 	})
 
-	handler := &APIHandler{dbStore: dbStore, btcClient: btcClient, wsHub: wsHub, blockScanner: blockScanner}
+	handler := &APIHandler{
+		dbStore:      dbStore,
+		btcClient:    btcClient,
+		wsHub:        wsHub,
+		blockScanner: blockScanner,
+		invManager:   heuristics.NewInvestigationManager(),
+	}
 
 	api := r.Group("/api/v1")
 	{
@@ -71,6 +78,18 @@ func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hu
 		// Historical Block Scanner
 		api.POST("/scan", handler.handleStartScan)
 		api.GET("/scan/progress", handler.handleScanProgress)
+
+		// ── Incident Response & Fund Tracking (Phase 18) ──────────
+		inv := api.Group("/investigation")
+		{
+			inv.POST("", handler.handleCreateInvestigation)
+			inv.GET("/:id", handler.handleGetInvestigation)
+			inv.POST("/:id/trace", handler.handleRunTrace)
+			inv.GET("/:id/graph", handler.handleGetFlowGraph)
+			inv.POST("/:id/tag", handler.handleTagAddress)
+			inv.GET("/:id/timeline", handler.handleGetTimeline)
+			inv.GET("/:id/exits", handler.handleGetExchangeExits)
+		}
 	}
 
 	// Serve Static Dashboard

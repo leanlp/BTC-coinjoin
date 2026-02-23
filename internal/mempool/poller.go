@@ -19,6 +19,8 @@ type Poller struct {
 	wsHub     *api.Hub
 	dbStore   *db.PostgresStore
 	seenTXs   map[string]bool
+	Watchlist *heuristics.AddressWatchlist
+	AlertMgr  *heuristics.AlertManager
 }
 
 // StreamPayload represents the real-time data sent to the dashboard UI
@@ -39,11 +41,16 @@ type StreamPayload struct {
 }
 
 func NewPoller(btcClient *bitcoin.Client, wsHub *api.Hub, dbStore *db.PostgresStore) *Poller {
+	watchlist := heuristics.NewAddressWatchlist()
+	alertMgr := heuristics.NewAlertManager(nil) // WebSocket callback wired separately
+
 	return &Poller{
 		btcClient: btcClient,
 		wsHub:     wsHub,
 		dbStore:   dbStore,
 		seenTXs:   make(map[string]bool),
+		Watchlist: watchlist,
+		AlertMgr:  alertMgr,
 	}
 }
 
@@ -157,18 +164,25 @@ func (p *Poller) Run(ctx context.Context) {
 				// Measure CUDA / Engine processing time
 				start := time.Now()
 
-				// Re-using the engine's core analysis
+				// Re-using the engine's core 28-step analysis pipeline
 				result := heuristics.AnalyzeTx(tx)
 
 				elapsed := float64(time.Since(start).Microseconds()) / 1000.0
 
-				// Check if CUDA was likely used (heuristic: threshold topology usually triggers it)
-				// Now unconditionally true since we moved all processing to the GPU
+				// CUDA GPU acceleration (unconditionally enabled)
 				isCuda := true
+
+				// ── Phase 19: Real-Time Watchlist + Risk Scoring ────────
+				watchlistHits := p.Watchlist.CheckTransaction(tx)
+				assessment := heuristics.ScoreTransaction(tx, result, watchlistHits)
+
+				// Emit alerts for medium+ severity
+				if assessment.Severity != "info" && assessment.Severity != "low" {
+					p.AlertMgr.EmitFromAssessment(assessment, watchlistHits)
+				}
 
 				// Persist CoinJoin detections to the isolated database
 				if p.dbStore != nil {
-					// Check if this transaction has any CoinJoin-related flags
 					isCoinJoinFlag := (result.HeuristicFlags&uint64(heuristics.FlagIsWhirlpoolStruct)) > 0 ||
 						(result.HeuristicFlags&uint64(heuristics.FlagIsWasabiSuspect)) > 0 ||
 						(result.HeuristicFlags&uint64(heuristics.FlagLikelyCollabConstruct)) > 0 ||
@@ -204,7 +218,7 @@ func (p *Poller) Run(ctx context.Context) {
 				p.wsHub.Broadcast(payloadBytes)
 
 				processedCount++
-				if processedCount >= 5 {
+				if processedCount >= 20 {
 					break
 				}
 			}

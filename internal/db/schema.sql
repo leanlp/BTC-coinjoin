@@ -62,3 +62,55 @@ CREATE TABLE IF NOT EXISTS shadow_results (
 );
 
 CREATE INDEX IF NOT EXISTS idx_shadow_results_txid ON shadow_results (txid);
+
+-- ============================================================
+-- Incident Response & Fund Tracking (Phase 18)
+-- ============================================================
+
+-- Investigation cases for incident response
+CREATE TABLE IF NOT EXISTS investigations (
+    id              SERIAL PRIMARY KEY,
+    case_id         VARCHAR(64) UNIQUE NOT NULL,  -- External case reference
+    name            TEXT NOT NULL,
+    description     TEXT,
+    status          VARCHAR(20) DEFAULT 'active', -- active/paused/completed/archived
+    total_stolen    BIGINT DEFAULT 0,
+    total_recovered BIGINT DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- Tagged addresses within investigations
+CREATE TABLE IF NOT EXISTS investigation_addresses (
+    id                SERIAL PRIMARY KEY,
+    investigation_id  INT REFERENCES investigations(id) ON DELETE CASCADE,
+    address           VARCHAR(255) NOT NULL,
+    label             TEXT,
+    role              VARCHAR(30) NOT NULL,  -- 'theft'/'intermediate'/'mixer'/'exchange'/'suspect'/'unknown'
+    notes             TEXT,
+    hop_number        INT DEFAULT 0,
+    value_sats        BIGINT DEFAULT 0,
+    tagged_by         VARCHAR(100),
+    tagged_at         TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_inv_addr_investigation ON investigation_addresses (investigation_id);
+CREATE INDEX IF NOT EXISTS idx_inv_addr_address ON investigation_addresses (address);
+
+-- Fund flow edges for tracing stolen funds
+CREATE TABLE IF NOT EXISTS fund_flows (
+    id                SERIAL PRIMARY KEY,
+    investigation_id  INT REFERENCES investigations(id) ON DELETE CASCADE,
+    from_address      VARCHAR(255),
+    to_address        VARCHAR(255),
+    txid              VARCHAR(64),
+    value_sats        BIGINT,
+    hop_number        INT,
+    is_coinjoin       BOOLEAN DEFAULT FALSE,
+    confidence        REAL DEFAULT 1.0,
+    created_at        TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fund_flows_investigation ON fund_flows (investigation_id);
+CREATE INDEX IF NOT EXISTS idx_fund_flows_from ON fund_flows (from_address);
+CREATE INDEX IF NOT EXISTS idx_fund_flows_to ON fund_flows (to_address);
