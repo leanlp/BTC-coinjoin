@@ -1,0 +1,36 @@
+# Compiled binaries
+btc-coinjoin-cuda-analytics
+*.exe
+*.o
+*.a
+*.so
+
+# Environment files with real credentials
+.env
+.env.local
+.env.production
+
+# Go build artifacts
+/vendor/
+*.test
+__debug_bin*
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Docker data volumes
+rawblock_data/
+
+# Temporary files
+tmp/
