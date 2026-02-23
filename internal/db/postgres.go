@@ -2,13 +2,20 @@ package db
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rawblock/coinjoin-engine/pkg/models"
 )
+
+// schemaSQL is compiled into the binary at build time.
+// This ensures schema init works inside the Docker runtime image which
+// does not copy internal/db/schema.sql into the final stage.
+//
+//go:embed schema.sql
+var schemaSQL string
 
 type PostgresStore struct {
 	pool *pgxpool.Pool
@@ -36,14 +43,9 @@ func (s *PostgresStore) Close() {
 	}
 }
 
-// InitSchema loads and executes the schema.sql file
+// InitSchema executes the embedded schema.sql DDL statements.
 func (s *PostgresStore) InitSchema() error {
-	schemaBytes, err := os.ReadFile("internal/db/schema.sql")
-	if err != nil {
-		return fmt.Errorf("failed to read schema file: %v", err)
-	}
-
-	_, err = s.pool.Exec(context.Background(), string(schemaBytes))
+	_, err := s.pool.Exec(context.Background(), schemaSQL)
 	if err != nil {
 		return fmt.Errorf("failed to execute schema migrations: %v", err)
 	}
@@ -81,7 +83,11 @@ func (s *PostgresStore) SaveAnalysisResult(ctx context.Context, blockHeight int,
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 		`
 		for _, edge := range result.Edges {
-			// Extracting the Hex string from our uuid implementation, normally this would be BYTEA
+			auditHash := edge.AuditHash
+			if auditHash == "" {
+				// Backward compatibility for older edge generators.
+				auditHash = edge.EdgeID
+			}
 			_, err = tx.Exec(ctx, insertEdgeSQL,
 				blockHeight,
 				edge.SrcNodeID,
@@ -90,7 +96,7 @@ func (s *PostgresStore) SaveAnalysisResult(ctx context.Context, blockHeight int,
 				edge.LLRScore,
 				edge.DependencyGroup,
 				edge.SnapshotID,
-				edge.EdgeID, // Using edgeID string as the placeholder for the sha256 byte array in this implementation
+				auditHash,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to insert evidence edge: %v", err)
@@ -201,6 +207,94 @@ func (s *PostgresStore) GetPool() *pgxpool.Pool {
 	return s.pool
 }
 
+type InvestigationSeed struct {
+	CaseID  string
+	Name    string
+	Address string
+	Role    string
+	Label   string
+}
+
+// SaveInvestigation upserts investigation metadata for durable case storage.
+func (s *PostgresStore) SaveInvestigation(ctx context.Context, caseID, name, description string, totalStolen int64) error {
+	sql := `
+		INSERT INTO investigations (case_id, name, description, total_stolen, status)
+		VALUES ($1, $2, $3, $4, 'active')
+		ON CONFLICT (case_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			total_stolen = EXCLUDED.total_stolen,
+			status = 'active',
+			updated_at = NOW();
+	`
+	_, err := s.pool.Exec(ctx, sql, caseID, name, description, totalStolen)
+	return err
+}
+
+// SaveInvestigationAddress upserts an investigation-tagged address.
+func (s *PostgresStore) SaveInvestigationAddress(ctx context.Context, caseID, address, label, role, notes, taggedBy string) error {
+	sql := `
+		WITH target AS (
+			SELECT id FROM investigations WHERE case_id = $1
+		),
+		updated AS (
+			UPDATE investigation_addresses a
+			SET
+				label = $3,
+				role = $4,
+				notes = $5,
+				tagged_by = $6,
+				tagged_at = NOW()
+			FROM target
+			WHERE a.investigation_id = target.id
+				AND a.address = $2
+			RETURNING a.id
+		)
+		INSERT INTO investigation_addresses
+			(investigation_id, address, label, role, notes, tagged_by, tagged_at)
+		SELECT target.id, $2, $3, $4, $5, $6, NOW()
+		FROM target
+		WHERE NOT EXISTS (SELECT 1 FROM updated);
+	`
+	result, err := s.pool.Exec(ctx, sql, caseID, address, label, role, notes, taggedBy)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("investigation case_id not found: %s", caseID)
+	}
+	return nil
+}
+
+// LoadActiveInvestigationSeeds loads active tagged addresses for warm-starting
+// watchlist + taint map on process boot.
+func (s *PostgresStore) LoadActiveInvestigationSeeds(ctx context.Context) ([]InvestigationSeed, error) {
+	sql := `
+		SELECT i.case_id, i.name, a.address, a.role, COALESCE(a.label, '')
+		FROM investigations i
+		JOIN investigation_addresses a ON a.investigation_id = i.id
+		WHERE i.status = 'active';
+	`
+	rows, err := s.pool.Query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seeds := make([]InvestigationSeed, 0)
+	for rows.Next() {
+		var seed InvestigationSeed
+		if err := rows.Scan(&seed.CaseID, &seed.Name, &seed.Address, &seed.Role, &seed.Label); err != nil {
+			return nil, err
+		}
+		seeds = append(seeds, seed)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+	return seeds, nil
+}
+
 // SaveRiskAssessment persists the risk assessment for ANY analyzed transaction.
 // Unlike SaveAnalysisResult (which only stores CoinJoin-flagged txs), this
 // stores a risk row for every tx processed by the pipeline, enabling
@@ -215,11 +309,15 @@ func (s *PostgresStore) SaveRiskAssessment(ctx context.Context, blockHeight int,
 			 taint_level, num_inputs, num_outputs, total_value_sats)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (txid) DO UPDATE SET
+			block_height = EXCLUDED.block_height,
 			risk_score = EXCLUDED.risk_score,
 			risk_level = EXCLUDED.risk_level,
 			privacy_score = EXCLUDED.privacy_score,
 			heuristic_flags = EXCLUDED.heuristic_flags,
 			taint_level = EXCLUDED.taint_level,
+			num_inputs = EXCLUDED.num_inputs,
+			num_outputs = EXCLUDED.num_outputs,
+			total_value_sats = EXCLUDED.total_value_sats,
 			analyzed_at = NOW();
 	`
 	_, err := s.pool.Exec(ctx, sql, txid, blockHeight, riskScore, riskLevel,

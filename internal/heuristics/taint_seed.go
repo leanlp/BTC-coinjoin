@@ -2,6 +2,7 @@ package heuristics
 
 import (
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/rawblock/coinjoin-engine/pkg/models"
@@ -43,6 +44,7 @@ func SeedFromInvestigationAddresses(addresses []string) int {
 
 	seeded := 0
 	for _, addr := range addresses {
+		addr = strings.TrimSpace(addr)
 		if addr == "" {
 			continue
 		}
@@ -70,6 +72,11 @@ func SeedFromExternalIntel(sources []TaintSource) int {
 
 	seeded := 0
 	for _, src := range sources {
+		addr := strings.TrimSpace(src.Address)
+		if addr == "" {
+			continue
+		}
+		src.Address = addr
 		current, exists := globalTaintMap[src.Address]
 		if !exists || src.TaintLevel > current {
 			globalTaintMap[src.Address] = src.TaintLevel
@@ -79,10 +86,16 @@ func SeedFromExternalIntel(sources []TaintSource) int {
 	return seeded
 }
 
-// CheckInputsForTaint checks if any transaction inputs come from tainted addresses.
-// Returns the maximum taint level found and whether FlagHighRisk should be set.
+// CheckInputsForTaint evaluates taint exposure across transaction inputs.
 //
-// Called by AnalyzeTx (Step 28) to integrate taint into the pipeline.
+// Returns the weighted taint ratio (Σ input_value*taint / Σ input_value) and
+// whether FlagHighRisk should be set.
+//
+// High-risk is triggered when:
+//   - weighted exposure >= 0.25 (material taint share), OR
+//   - any direct source taint >= 0.85 (near-certain sanctioned/theft source)
+//
+// Called by AnalyzeTx and risk scoring paths to integrate taint into the pipeline.
 func CheckInputsForTaint(tx models.Transaction) (taintLevel float64, isHighRisk bool) {
 	taintMu.RLock()
 	defer taintMu.RUnlock()
@@ -91,18 +104,48 @@ func CheckInputsForTaint(tx models.Transaction) (taintLevel float64, isHighRisk 
 		return 0, false
 	}
 
+	var totalIn int64
+	var weightedTaint float64
 	maxTaint := 0.0
+
 	for _, input := range tx.Inputs {
-		if input.Address == "" {
+		addr := strings.TrimSpace(input.Address)
+		if addr == "" {
 			continue
 		}
-		if taint, exists := globalTaintMap[input.Address]; exists && taint > maxTaint {
-			maxTaint = taint
+		if input.Value <= 0 {
+			continue
+		}
+
+		totalIn += input.Value
+
+		if taint, exists := globalTaintMap[addr]; exists {
+			weightedTaint += taint * float64(input.Value)
+			if taint > maxTaint {
+				maxTaint = taint
+			}
 		}
 	}
 
-	// FlagHighRisk threshold: 25% taint exposure (matches FATF "high" category)
-	return maxTaint, maxTaint >= 0.25
+	totalOut := int64(0)
+	for _, out := range tx.Outputs {
+		if out.Value > 0 {
+			totalOut += out.Value
+		}
+	}
+
+	denom := totalIn
+	if totalOut > denom {
+		denom = totalOut
+	}
+	if denom <= 0 {
+		return 0, false
+	}
+
+	exposure := weightedTaint / float64(denom)
+	isHigh := exposure >= 0.25 || maxTaint >= 0.85
+
+	return exposure, isHigh
 }
 
 // GetGlobalTaintMapSize returns the current number of tracked tainted addresses

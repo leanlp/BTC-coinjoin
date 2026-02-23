@@ -1,6 +1,7 @@
 package heuristics
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +53,11 @@ type AddressWatchlist struct {
 	addresses map[string]WatchedAddress
 }
 
+var (
+	globalWatchlist     *AddressWatchlist
+	globalWatchlistOnce sync.Once
+)
+
 // NewAddressWatchlist creates a new empty watchlist
 func NewAddressWatchlist() *AddressWatchlist {
 	return &AddressWatchlist{
@@ -59,8 +65,22 @@ func NewAddressWatchlist() *AddressWatchlist {
 	}
 }
 
+// GetGlobalAddressWatchlist returns a process-wide concurrent watchlist
+// shared by the poller, scanner, and investigation APIs.
+func GetGlobalAddressWatchlist() *AddressWatchlist {
+	globalWatchlistOnce.Do(func() {
+		globalWatchlist = NewAddressWatchlist()
+	})
+	return globalWatchlist
+}
+
 // Add registers an address for monitoring
 func (w *AddressWatchlist) Add(addr, category, label, caseID, alertLevel string) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -76,6 +96,11 @@ func (w *AddressWatchlist) Add(addr, category, label, caseID, alertLevel string)
 
 // Remove stops monitoring an address
 func (w *AddressWatchlist) Remove(addr string) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.addresses, addr)
@@ -83,6 +108,11 @@ func (w *AddressWatchlist) Remove(addr string) {
 
 // Contains checks if an address is watchlisted (O(1))
 func (w *AddressWatchlist) Contains(addr string) bool {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return false
+	}
+
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	_, exists := w.addresses[addr]
@@ -91,6 +121,11 @@ func (w *AddressWatchlist) Contains(addr string) bool {
 
 // Get returns the watchlist entry for an address
 func (w *AddressWatchlist) Get(addr string) (WatchedAddress, bool) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return WatchedAddress{}, false
+	}
+
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	entry, exists := w.addresses[addr]

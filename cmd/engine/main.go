@@ -57,6 +57,30 @@ func main() {
 
 	// Sprint 1: Initialize global taint map for risk detection
 	heuristics.InitGlobalTaintMap()
+	watchlist := heuristics.GetGlobalAddressWatchlist()
+	if dbConn != nil {
+		seeds, err := dbConn.LoadActiveInvestigationSeeds(context.Background())
+		if err != nil {
+			log.Printf("Warning: failed to warm-load investigation seeds: %v", err)
+		} else if len(seeds) > 0 {
+			sources := make([]heuristics.TaintSource, 0, len(seeds))
+			for _, seed := range seeds {
+				label := seed.Label
+				if label == "" {
+					label = seed.Name
+				}
+				watchlist.Add(seed.Address, seed.Role, label, seed.CaseID, heuristics.AlertLevelForRole(seed.Role))
+				sources = append(sources, heuristics.TaintSource{
+					Address:    seed.Address,
+					Category:   seed.Role,
+					TaintLevel: heuristics.TaintLevelForRole(seed.Role),
+					Label:      label,
+				})
+			}
+			heuristics.SeedFromExternalIntel(sources)
+			log.Printf("Warm-loaded %d investigation seeds into watchlist/taint map", len(seeds))
+		}
+	}
 
 	// Setup and start the Mempool Poller + Block Scanner
 	// GUARD: Only start if btcClient is non-nil to avoid runtime panic

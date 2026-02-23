@@ -36,10 +36,13 @@ services:
       - "${PORT:-5339}:${PORT:-5339}"
     env_file: .env
     environment:
+      # sslmode=require is the production default.
+      # Use sslmode=disable ONLY for localhost/dev databases.
       - DATABASE_URL=postgres://${POSTGRES_USER:-coinjoin_admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-coinjoin_db}?sslmode=disable
       - BTC_RPC_HOST=${BTC_RPC_HOST:-host.docker.internal:8332}
       - BTC_RPC_USER=${BTC_RPC_USER}
       - BTC_RPC_PASS=${BTC_RPC_PASS}
+      - API_AUTH_TOKEN=${API_AUTH_TOKEN}
       - PORT=${PORT:-5339}
       - GIN_MODE=${GIN_MODE:-release}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}

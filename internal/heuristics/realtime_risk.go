@@ -1,6 +1,8 @@
 package heuristics
 
 import (
+	"math"
+
 	"github.com/rawblock/coinjoin-engine/pkg/models"
 )
 
@@ -45,9 +47,20 @@ func ScoreTransaction(tx models.Transaction, result models.PrivacyAnalysisResult
 	var signals []string
 
 	// ─── Total transaction value ─────────────────────────────────────
-	totalValue := int64(0)
+	totalIn := int64(0)
 	for _, in := range tx.Inputs {
-		totalValue += in.Value
+		totalIn += in.Value
+	}
+	totalOut := int64(0)
+	for _, out := range tx.Outputs {
+		totalOut += out.Value
+	}
+
+	// Prefer the larger observed side to remain robust when prevout input
+	// lookups are missing and input values are partially zeroed.
+	totalValue := totalOut
+	if totalIn > totalOut {
+		totalValue = totalIn
 	}
 	assessment.ValueBTC = float64(totalValue) / 100000000.0
 
@@ -112,9 +125,19 @@ func ScoreTransaction(tx models.Transaction, result models.PrivacyAnalysisResult
 	}
 
 	// ─── Taint / High risk ───────────────────────────────────────────
+	taintLevel, taintHighRisk := CheckInputsForTaint(tx)
+	if taintLevel > 0 {
+		// Continuous taint contribution (0-25 points), robust to partial contamination.
+		riskScore += int(math.Round(math.Min(25.0, taintLevel*25.0)))
+		signals = append(signals, "taint_exposure")
+	}
 	if (flags & uint64(FlagHighRisk)) > 0 {
 		riskScore += 30
 		signals = append(signals, "tainted_funds")
+	} else if taintHighRisk {
+		// Safety net if analysis flags are stale but taint map has high confidence intel.
+		riskScore += 25
+		signals = append(signals, "taint_high_risk")
 	}
 
 	// ─── Bot behavior ────────────────────────────────────────────────

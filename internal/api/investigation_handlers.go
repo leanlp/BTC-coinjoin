@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -38,9 +39,40 @@ func (h *APIHandler) handleCreateInvestigation(c *gin.Context) {
 
 	inv := h.invManager.CreateInvestigation(caseID, req.Name, req.Description, req.TheftAddresses, req.TotalStolen)
 
+	// Seed taint intelligence and live watchlist so risk scoring starts immediately.
+	seeded := heuristics.SeedFromInvestigationAddresses(req.TheftAddresses)
+	watchlist := heuristics.GetGlobalAddressWatchlist()
+	for _, addr := range req.TheftAddresses {
+		if addr == "" {
+			continue
+		}
+		watchlist.Add(addr, "theft", "Theft: "+req.Name, caseID, heuristics.AlertLevelForRole("theft"))
+	}
+
+	// Persist investigation to DB for restart durability.
+	dbPersisted := false
+	if h.dbStore != nil {
+		if err := h.dbStore.SaveInvestigation(c.Request.Context(), caseID, req.Name, req.Description, req.TotalStolen); err != nil {
+			log.Printf("[Investigation] failed to persist case %s: %v", caseID, err)
+		} else {
+			dbPersisted = true
+			for _, theftAddr := range req.TheftAddresses {
+				if theftAddr == "" {
+					continue
+				}
+				if err := h.dbStore.SaveInvestigationAddress(c.Request.Context(), caseID, theftAddr,
+					"Theft: "+req.Name, "theft", "seeded theft origin", "system"); err != nil {
+					log.Printf("[Investigation] failed to persist theft address %s for case %s: %v", theftAddr, caseID, err)
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"status":        "created",
 		"investigation": inv,
+		"taintSeeded":   seeded,
+		"dbPersisted":   dbPersisted,
 	})
 }
 
@@ -155,11 +187,39 @@ func (h *APIHandler) handleTagAddress(c *gin.Context) {
 
 	inv.TagAddress(req.Address, req.Label, req.Role, req.Notes, req.TaggedBy)
 
+	// Keep the global watchlist synchronized with investigator tags.
+	heuristics.GetGlobalAddressWatchlist().Add(
+		req.Address,
+		req.Role,
+		req.Label,
+		caseID,
+		heuristics.AlertLevelForRole(req.Role),
+	)
+	heuristics.SeedFromExternalIntel([]heuristics.TaintSource{
+		{
+			Address:    req.Address,
+			Category:   req.Role,
+			TaintLevel: heuristics.TaintLevelForRole(req.Role),
+			Label:      req.Label,
+		},
+	})
+
+	dbPersisted := false
+	if h.dbStore != nil {
+		if err := h.dbStore.SaveInvestigationAddress(c.Request.Context(), caseID, req.Address,
+			req.Label, req.Role, req.Notes, req.TaggedBy); err != nil {
+			log.Printf("[Investigation] failed to persist tagged address %s for case %s: %v", req.Address, caseID, err)
+		} else {
+			dbPersisted = true
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "tagged",
-		"address": req.Address,
-		"label":   req.Label,
-		"role":    req.Role,
+		"status":      "tagged",
+		"address":     req.Address,
+		"label":       req.Label,
+		"role":        req.Role,
+		"dbPersisted": dbPersisted,
 	})
 }
 

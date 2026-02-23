@@ -137,4 +137,3 @@ CREATE TABLE IF NOT EXISTS risk_assessments (
 CREATE INDEX IF NOT EXISTS idx_risk_assessments_level ON risk_assessments (risk_level);
 CREATE INDEX IF NOT EXISTS idx_risk_assessments_score ON risk_assessments (risk_score DESC);
 CREATE INDEX IF NOT EXISTS idx_risk_assessments_height ON risk_assessments USING BRIN (block_height);
-

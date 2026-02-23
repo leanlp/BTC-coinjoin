@@ -1,6 +1,7 @@
 package heuristics
 
 import (
+	"sync"
 	"time"
 )
 
@@ -65,6 +66,7 @@ type TimelineEvent struct {
 
 // InvestigationManager handles CRUD for investigations
 type InvestigationManager struct {
+	mu    sync.RWMutex
 	cases map[string]*Investigation
 }
 
@@ -90,17 +92,24 @@ func (m *InvestigationManager) CreateInvestigation(id, name, description string,
 		TraceConfig:    DefaultTraceConfig(),
 	}
 
+	m.mu.Lock()
 	m.cases[id] = inv
+	m.mu.Unlock()
 	return inv
 }
 
 // GetInvestigation retrieves a case by ID
 func (m *InvestigationManager) GetInvestigation(id string) *Investigation {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.cases[id]
 }
 
 // ListInvestigations returns all active cases
 func (m *InvestigationManager) ListInvestigations() []*Investigation {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	var list []*Investigation
 	for _, inv := range m.cases {
 		list = append(list, inv)

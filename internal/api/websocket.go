@@ -3,6 +3,8 @@ package api
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,11 +12,36 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// wsAllowedOrigins is parsed once at startup from ALLOWED_ORIGINS.
+// An empty list or "*" means all origins are permitted (dev mode only).
+var wsAllowedOrigins = func() []string {
+	raw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
+	if raw == "" || raw == "*" {
+		return nil // nil == allow all
+	}
+	parts := strings.Split(raw, ",")
+	for i, p := range parts {
+		parts[i] = strings.TrimSpace(p)
+	}
+	return parts
+}()
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all for local dashboard
+		// In dev mode (no ALLOWED_ORIGINS set) accept all origins.
+		if wsAllowedOrigins == nil {
+			return true
+		}
+		origin := r.Header.Get("Origin")
+		for _, allowed := range wsAllowedOrigins {
+			if allowed == origin {
+				return true
+			}
+		}
+		log.Printf("[WS] Rejected connection from unlisted origin: %q", origin)
+		return false
 	},
 }
 
