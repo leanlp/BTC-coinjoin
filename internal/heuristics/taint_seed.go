@@ -100,7 +100,7 @@ func CheckInputsForTaint(tx models.Transaction) (taintLevel float64, isHighRisk 
 	taintMu.RLock()
 	defer taintMu.RUnlock()
 
-	if globalTaintMap == nil || len(globalTaintMap) == 0 {
+	if len(globalTaintMap) == 0 {
 		return 0, false
 	}
 
