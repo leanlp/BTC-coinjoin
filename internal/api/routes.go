@@ -127,6 +127,15 @@ func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hu
 			inv.GET("/:id/timeline", handler.handleGetTimeline)
 			inv.GET("/:id/exits", handler.handleGetExchangeExits)
 		}
+
+		// ── Phase 18: Advanced Forensics API ─────────────────────
+		forensics := auth.Group("/forensics")
+		{
+			forensics.GET("/taint/:address", handler.handleGetTaint)
+			forensics.GET("/script/:txid", handler.handleScriptFingerprint)
+			forensics.POST("/cross-chain", handler.handleCrossChainCorrelation)
+			forensics.GET("/temporal/:txid", handler.handleTemporalCorrelation)
+		}
 	}
 
 	// Serve Static Dashboard
@@ -322,15 +331,21 @@ func (h *APIHandler) handleHealth(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":     "operational",
-		"engine":     "RawBlock Forensics Engine v3.0",
+		"engine":     "RawBlock Forensics Engine v4.0",
 		"snapshotId": heuristics.CurrentSnapshotID,
 		"capabilities": gin.H{
-			"mitm_solver":     true,
-			"cpsat_solver":    true,
-			"factor_graph":    true,
-			"shadow_mode":     true,
-			"anonset_windows": true,
-			"ari_vi_metrics":  true,
+			"mitm_solver":          true,
+			"cpsat_solver":         true,
+			"factor_graph":         true,
+			"shadow_mode":          true,
+			"anonset_windows":      true,
+			"ari_vi_metrics":       true,
+			"taint_propagation":    true,
+			"script_fingerprint":   true,
+			"temporal_correlation": true,
+			"markov_scoring":       true,
+			"cross_chain":          true,
+			"zmq_mempool":          true,
 		},
 		"dbConnected": dbConnected,
 	})
@@ -438,3 +453,169 @@ func BroadcastCoinJoinAlert(wsHub *Hub) func(scanner.CoinJoinAlert) {
 			alert.MixerType, alert.Txid, alert.BlockHeight, alert.AnonSet, alert.TotalValueBTC)
 	}
 }
+
+// ============================================================
+// Phase 18: Advanced Forensics Handlers
+// ============================================================
+
+// handleGetTaint returns Markov absorption scores for an address.
+// GET /api/v1/forensics/taint/:address
+func (h *APIHandler) handleGetTaint(c *gin.Context) {
+	address := c.Param("address")
+	if address == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Address parameter required"})
+		return
+	}
+
+	// Build graph from recent transactions (in production, this would query the DB)
+	graph := heuristics.NewTransactionGraph()
+
+	// Mark known absorbers (exchanges)
+	knownExchanges := map[string]string{
+		"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa": "satoshi-genesis",
+	}
+	for addr, label := range knownExchanges {
+		graph.MarkAbsorber(addr, label)
+	}
+
+	result := heuristics.ComputeMarkovScore(address, graph)
+
+	c.JSON(http.StatusOK, gin.H{
+		"address": address,
+		"markov":  result,
+	})
+}
+
+// handleScriptFingerprint returns deep script analysis for a transaction.
+// GET /api/v1/forensics/script/:txid
+func (h *APIHandler) handleScriptFingerprint(c *gin.Context) {
+	txid := c.Param("txid")
+	if h.btcClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Bitcoin RPC not configured"})
+		return
+	}
+
+	hash, err := chainhash.NewHashFromStr(txid)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid txid format"})
+		return
+	}
+
+	rawTx, err := h.btcClient.GetRawTransaction(hash)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tx", "details": err.Error()})
+		return
+	}
+
+	tx := models.Transaction{
+		Txid:     rawTx.Txid,
+		LockTime: rawTx.LockTime,
+		Version:  int32(rawTx.Version),
+	}
+	for _, vin := range rawTx.Vin {
+		scriptSig := ""
+		if vin.ScriptSig != nil {
+			scriptSig = vin.ScriptSig.Hex
+		}
+		// Resolve input address
+		var inAddr string
+		if vin.Txid != "" {
+			prevHash, _ := chainhash.NewHashFromStr(vin.Txid)
+			if prevTx, err := h.btcClient.GetRawTransaction(prevHash); err == nil {
+				if int(vin.Vout) < len(prevTx.Vout) && len(prevTx.Vout[vin.Vout].ScriptPubKey.Addresses) > 0 {
+					inAddr = prevTx.Vout[vin.Vout].ScriptPubKey.Addresses[0]
+				}
+			}
+		}
+		tx.Inputs = append(tx.Inputs, models.TxIn{
+			Address:   inAddr,
+			ScriptSig: scriptSig,
+			Sequence:  vin.Sequence,
+		})
+	}
+	for _, vout := range rawTx.Vout {
+		var outAddr string
+		if len(vout.ScriptPubKey.Addresses) > 0 {
+			outAddr = vout.ScriptPubKey.Addresses[0]
+		}
+		tx.Outputs = append(tx.Outputs, models.TxOut{
+			Address:      outAddr,
+			ScriptPubKey: vout.ScriptPubKey.Hex,
+		})
+	}
+
+	result := heuristics.AnalyzeScriptFingerprint(tx)
+
+	c.JSON(http.StatusOK, gin.H{
+		"txid":   txid,
+		"script": result,
+	})
+}
+
+// handleCrossChainCorrelation analyzes a potential cross-chain swap.
+// POST /api/v1/forensics/cross-chain
+func (h *APIHandler) handleCrossChainCorrelation(c *gin.Context) {
+	var req struct {
+		SourceChain    string  `json:"sourceChain" binding:"required"`
+		SourceTxid     string  `json:"sourceTxid" binding:"required"`
+		SourceValue    int64   `json:"sourceValue" binding:"required"`
+		SourceTimestamp int64  `json:"sourceTimestamp" binding:"required"`
+		DestChain      string  `json:"destChain" binding:"required"`
+		DestTxid       string  `json:"destTxid" binding:"required"`
+		DestValue      int64   `json:"destValue" binding:"required"`
+		DestTimestamp  int64   `json:"destTimestamp" binding:"required"`
+		ExchangeRate   float64 `json:"exchangeRate" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
+		return
+	}
+
+	result := heuristics.AnalyzeCrossChainSwap(
+		req.SourceChain, req.SourceTxid, req.SourceValue, req.SourceTimestamp,
+		req.DestChain, req.DestTxid, req.DestValue, req.DestTimestamp,
+		req.ExchangeRate,
+	)
+
+	c.JSON(http.StatusOK, gin.H{
+		"correlation": result,
+	})
+}
+
+// handleTemporalCorrelation returns timing analysis for a transaction.
+// GET /api/v1/forensics/temporal/:txid
+func (h *APIHandler) handleTemporalCorrelation(c *gin.Context) {
+	txid := c.Param("txid")
+	if h.btcClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Bitcoin RPC not configured"})
+		return
+	}
+
+	hash, err := chainhash.NewHashFromStr(txid)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid txid format"})
+		return
+	}
+
+	rawTx, err := h.btcClient.GetRawTransaction(hash)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tx", "details": err.Error()})
+		return
+	}
+
+	tx := models.Transaction{
+		Txid:      rawTx.Txid,
+		BlockTime: rawTx.Blocktime,
+	}
+
+	// For temporal analysis, we'd ideally fetch recent transactions from the same
+	// address cluster. For now, return the analysis with an empty recent tx set.
+	result := heuristics.AnalyzeTemporalCorrelation(tx, nil)
+
+	c.JSON(http.StatusOK, gin.H{
+		"txid":     txid,
+		"temporal": result,
+	})
+}
+

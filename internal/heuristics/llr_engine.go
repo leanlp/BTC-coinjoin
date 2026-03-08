@@ -22,6 +22,8 @@ const (
 	EdgeTypeDustLink          = 8  // Dust-based address linking
 	EdgeTypeUnmixLink         = 9  // Deterministic CoinJoin unmixing
 	EdgeTypeTransitive        = 10 // Multi-hop transitive evidence
+	EdgeTypeTaintFlow         = 11 // Phase 18: FIFO/LIFO taint propagation
+	EdgeTypeCrossChain        = 12 // Phase 18: Cross-chain correlation
 )
 
 // Dependency Groups (Used to discount overlapping heuristics to prevent Probability Mass explosion)
@@ -33,6 +35,8 @@ const (
 	DepGroupTemporalSignals   = 4 // Timing-based features
 	DepGroupFeePatterns       = 5 // Fee-rate analysis features
 	DepGroupTopology          = 6 // Graph structure features
+	DepGroupTaintPropagation  = 7 // Phase 18: Taint flow features
+	DepGroupCrossChain        = 8 // Phase 18: Cross-chain correlation features
 )
 
 // --- 3-Layer Signal Taxonomy Flags (Bitmask) ---
@@ -99,7 +103,17 @@ const (
 	FlagStrategicConsolidation = 1 << 39 // Planned UTXO consolidation pattern
 )
 
-const CurrentSnapshotID = 202602235 // Version of the Heuristics Engine (Phase 17)
+// Layer 8: Advanced Forensics (Phase 18 — Deep analysis capabilities)
+const (
+	FlagScriptFingerprint = 1 << 40 // Deep script opcode fingerprint computed
+	FlagTaintPropagated   = 1 << 41 // Taint flow analysis completed
+	FlagTemporalCorrelated = 1 << 42 // Temporal correlation pattern detected
+	FlagCrossChainLinked  = 1 << 43 // Cross-chain swap correlation established
+	FlagMarkovScored      = 1 << 44 // Markov absorption score computed
+	FlagMempoolTracked    = 1 << 45 // Mempool first-seen telemetry recorded
+)
+
+const CurrentSnapshotID = 202602238 // Version of the Heuristics Engine (Phase 18)
 
 // ProbToLLR converts a real probability [0,1] into a Log-Likelihood Ratio.
 // LLR = log10( P(E|H1) / P(E|H0) )
