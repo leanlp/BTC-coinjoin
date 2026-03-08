@@ -644,12 +644,9 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 		res.HeuristicFlags |= uint64(FlagHighRisk)
 		// Reduce privacy score — tainted funds are under active surveillance
 		res.PrivacyScore -= 15
-		if res.PrivacyScore < 0 {
-			res.PrivacyScore = 0
-		}
 	}
-	// Store taint level for risk assessment persistence
-	_ = taintLevel
+	// Store taint exposure for downstream risk scoring (avoids redundant lock acquisition)
+	res.TaintExposure = taintLevel
 
 	// ════════════════════════════════════════════════════════════════════
 	// STEP 30: Behavioral Bot Detection (Sprint 1)
@@ -658,6 +655,48 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 	// ════════════════════════════════════════════════════════════════════
 	if detectBotBehavior(tx) {
 		res.HeuristicFlags |= uint64(FlagBotBehavior)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 31: Script Fingerprinting (Phase 18 — wired into pipeline)
+	// Deep script opcode analysis for wallet attribution
+	// ════════════════════════════════════════════════════════════════════
+	scriptFP := AnalyzeScriptFingerprint(tx)
+	res.ScriptFingerprint = &scriptFP
+	if scriptFP.WalletSignature != "" || scriptFP.HasTimeLock || len(scriptFP.OPReturnPayloads) > 0 {
+		res.HeuristicFlags |= uint64(FlagScriptFingerprint)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 32: Temporal Correlation (Phase 18 — wired into pipeline)
+	// Timing pattern detection for behavioral profiling
+	// ════════════════════════════════════════════════════════════════════
+	if len(tx.Inputs) >= 2 {
+		temporalResult := AnalyzeTemporalCorrelation(tx, nil)
+		res.TemporalSignals = &temporalResult
+		if temporalResult.PatternType != "none" && temporalResult.PatternType != "" {
+			res.HeuristicFlags |= uint64(FlagTemporalCorrelated)
+		}
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 33: Advanced Taint Propagation (Phase 18 — wired into pipeline)
+	// FIFO/LIFO/Proportional taint flow for all taint-bearing txs
+	// ════════════════════════════════════════════════════════════════════
+	if taintLevel > 0 {
+		taintResult := PropagateTaintAdvanced(tx, "proportional")
+		res.TaintAnalysis = &taintResult
+		res.HeuristicFlags |= uint64(FlagTaintPropagated)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// FINAL: Clamp privacy score to valid range [0, 100]
+	// ════════════════════════════════════════════════════════════════════
+	if res.PrivacyScore < 0 {
+		res.PrivacyScore = 0
+	}
+	if res.PrivacyScore > 100 {
+		res.PrivacyScore = 100
 	}
 
 	return res

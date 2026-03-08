@@ -78,10 +78,11 @@ type PrivacyAnalysisResult struct {
 	ValuePattern   *ValuePatternResult `json:"valuePattern,omitempty"`   // Value fingerprinting
 	ScriptInfo     *ScriptAnalysis     `json:"scriptInfo,omitempty"`     // Script template deep inspection
 	// Phase 18: Advanced Forensics
-	TaintAnalysis    *TaintResult              `json:"taintAnalysis,omitempty"`    // FIFO/LIFO taint propagation
-	ScriptFingerprint *ScriptFingerprintResult `json:"scriptFingerprint,omitempty"` // Deep script opcode analysis
-	TemporalSignals  *TemporalCorrelationResult `json:"temporalSignals,omitempty"`  // Timing correlation
-	MempoolIntel     *MempoolIntelResult        `json:"mempoolIntel,omitempty"`     // Pre-confirmation intelligence
+	TaintAnalysis     *TaintResult               `json:"taintAnalysis,omitempty"`    // FIFO/LIFO taint propagation
+	ScriptFingerprint *ScriptFingerprintResult    `json:"scriptFingerprint,omitempty"` // Deep script opcode analysis
+	TemporalSignals   *TemporalCorrelationResult  `json:"temporalSignals,omitempty"`  // Timing correlation
+	MempoolIntel      *MempoolIntelResult         `json:"mempoolIntel,omitempty"`     // Pre-confirmation intelligence
+	TaintExposure     float64                     `json:"taintExposure,omitempty"`    // Weighted taint ratio [0,1]
 }
 
 // EntropyResult holds Boltzmann transaction entropy analysis
