@@ -111,7 +111,7 @@ func (z *ZMQListener) connectAndListen(ctx context.Context) error {
 		default:
 		}
 
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		n, err := conn.Read(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

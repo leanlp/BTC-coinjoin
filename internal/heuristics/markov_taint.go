@@ -30,9 +30,6 @@ const (
 	// markovMaxDepth limits the BFS/random walk depth to prevent explosion.
 	markovMaxDepth = 10
 
-	// markovMaxIterations caps the power method convergence iterations.
-	markovMaxIterations = 50
-
 	// markovConvergenceEpsilon is the threshold for probability stabilization.
 	markovConvergenceEpsilon = 1e-6
 )

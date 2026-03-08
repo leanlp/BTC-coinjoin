@@ -54,24 +54,7 @@ var knownExchangePrefixes = map[string]string{
 	"bc1qxp3x5mqr6t5mhqkze3vj":    "Kraken",
 }
 
-// Known exchange deposit characteristics
-type exchangePattern struct {
-	Name           string
-	MinDeposit     int64 // Minimum deposit in sats
-	TypicalOutputs int   // Typical output count for deposits
-	UsesP2SH       bool  // Exchange uses P2SH addresses
-	UsesSegWit     bool  // Exchange uses native SegWit
-}
-
-var exchangePatterns = []exchangePattern{
-	{"Binance", 100000, 1, false, true},
-	{"Coinbase", 100000, 1, true, true},
-	{"Kraken", 100000, 1, true, true},
-	{"Bitfinex", 500000, 1, false, true},
-	{"Bybit", 100000, 1, false, true},
-	{"OKX", 100000, 1, false, true},
-	{"Huobi", 100000, 1, false, true},
-}
+// Known exchange deposit characteristics are used structurally in matchExchangePattern without hardcoding individual exchanges.
 
 // DetectExchangeExit analyzes a transaction for exchange deposit patterns
 func DetectExchangeExit(tx models.Transaction) ExchangeExitResult {

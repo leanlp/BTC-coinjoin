@@ -19,13 +19,13 @@ func resetTaintMapForTest(entries map[string]float64) {
 
 func TestCheckInputsForTaint_WeightedExposure(t *testing.T) {
 	resetTaintMapForTest(map[string]float64{
-		"tainted": 1.0,
+		"tainted": 0.5,
 	})
 
 	tx := models.Transaction{
 		Inputs: []models.TxIn{
-			{Address: "tainted", Value: 10000},
-			{Address: "clean", Value: 90000},
+			{Address: "tainted", Value: 20000},
+			{Address: "clean", Value: 80000},
 		},
 		Outputs: []models.TxOut{
 			{Value: 100000},
