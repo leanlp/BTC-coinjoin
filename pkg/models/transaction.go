@@ -26,10 +26,12 @@ type Transaction struct {
 	Fee         int64   `json:"fee"` // Calculated as Inputs - Outputs in Satoshis
 	Weight      int     `json:"weight"`
 	Vsize       int     `json:"vsize"`                 // BIP141 Virtual Size
-	LockTime    uint32  `json:"locktime"`              // nLockTime: anti-fee-sniping or timelock
-	Version     int32   `json:"version"`               // Tx version (1 or 2)
-	BlockHeight int     `json:"blockHeight,omitempty"` // Block height (0 for mempool)
-	BlockTime   int64   `json:"blockTime,omitempty"`   // Block timestamp (unix seconds)
+	LockTime        uint32  `json:"locktime"`              // nLockTime: anti-fee-sniping or timelock
+	Version         int32   `json:"version"`               // Tx version (1 or 2)
+	BlockHeight     int     `json:"blockHeight,omitempty"` // Block height (0 for mempool)
+	BlockTime       int64   `json:"blockTime,omitempty"`   // Block timestamp (unix seconds)
+	MempoolFirstSeen int64  `json:"mempoolFirstSeen,omitempty"` // Unix ms when first observed in mempool
+	BroadcastNodeIP  string `json:"broadcastNodeIP,omitempty"`  // IP of first broadcasting peer (if captured)
 }
 
 // EvidenceEdge represents a directional, probabilistic linkage in the UTXO graph.
@@ -75,6 +77,11 @@ type PrivacyAnalysisResult struct {
 	UTXOAge        *UTXOAgeResult      `json:"utxoAge,omitempty"`        // Input UTXO lifespan analysis
 	ValuePattern   *ValuePatternResult `json:"valuePattern,omitempty"`   // Value fingerprinting
 	ScriptInfo     *ScriptAnalysis     `json:"scriptInfo,omitempty"`     // Script template deep inspection
+	// Phase 18: Advanced Forensics
+	TaintAnalysis    *TaintResult              `json:"taintAnalysis,omitempty"`    // FIFO/LIFO taint propagation
+	ScriptFingerprint *ScriptFingerprintResult `json:"scriptFingerprint,omitempty"` // Deep script opcode analysis
+	TemporalSignals  *TemporalCorrelationResult `json:"temporalSignals,omitempty"`  // Timing correlation
+	MempoolIntel     *MempoolIntelResult        `json:"mempoolIntel,omitempty"`     // Pre-confirmation intelligence
 }
 
 // EntropyResult holds Boltzmann transaction entropy analysis
@@ -192,4 +199,99 @@ type ScriptAnalysis struct {
 	OPReturnSize     int    `json:"opReturnSize"`     // Size of OP_RETURN data in bytes
 	DominantWitness  string `json:"dominantWitness"`  // "v0"/"v1"/"legacy"
 	TapscriptDepth   int    `json:"tapscriptDepth"`   // Tapscript tree depth (0 = key-path)
+}
+
+// ============================================================
+// Phase 18: Advanced Forensics Models
+// ============================================================
+
+// TaintResult holds FIFO/LIFO taint flow accounting results
+type TaintResult struct {
+	Method          string             `json:"method"`          // "fifo"/"lifo"/"proportional"
+	InputTaintLevel float64            `json:"inputTaintLevel"` // Aggregate taint of all inputs (0.0 - 1.0)
+	OutputTaints    []OutputTaintEntry `json:"outputTaints"`    // Per-output taint breakdown
+	TotalAbsorbed   float64            `json:"totalAbsorbed"`   // Total taint absorbed by this tx
+	SourceLabels    []string           `json:"sourceLabels"`    // Known taint source labels
+	HopsFromSource  int                `json:"hopsFromSource"`  // Minimum hops from nearest taint source
+}
+
+// OutputTaintEntry holds taint level for a specific output
+type OutputTaintEntry struct {
+	Index      int     `json:"index"`
+	Address    string  `json:"address"`
+	Value      int64   `json:"value"`
+	TaintLevel float64 `json:"taintLevel"` // 0.0 (clean) to 1.0 (fully tainted)
+}
+
+// ScriptFingerprintResult holds deep opcode-level script fingerprinting
+type ScriptFingerprintResult struct {
+	InputScriptTypes    map[string]int `json:"inputScriptTypes"`    // Frequency map: "p2pkh"/"p2sh"/"p2wpkh"/"p2wsh"/"p2tr"
+	OutputScriptTypes   map[string]int `json:"outputScriptTypes"`   // Same for outputs
+	HasTimeLock         bool           `json:"hasTimeLock"`         // CLTV or CSV detected
+	TimeLockType        string         `json:"timeLockType"`        // "cltv"/"csv"/"none"
+	TimeLockValue       uint32         `json:"timeLockValue"`       // Lock height or time
+	MultisigConfigs     []string       `json:"multisigConfigs"`     // e.g., ["2-of-3", "3-of-5"]
+	WalletSignature     string         `json:"walletSignature"`     // Inferred wallet: "ledger"/"trezor"/"electrum"/"bitcoin-core"/"unknown"
+	SignatureScheme     string         `json:"signatureScheme"`     // "ecdsa"/"schnorr"/"mixed"
+	WitnessVersions     []int          `json:"witnessVersions"`     // SegWit witness versions found
+	NonStandardScripts  int            `json:"nonStandardScripts"`  // Count of non-standard scripts
+	OPReturnPayloads    []string       `json:"opReturnPayloads"`    // Hex-encoded OP_RETURN data
+	NSequenceAnalysis   string         `json:"nSequenceAnalysis"`   // "rbf-enabled"/"final"/"timelock"/"mixed"
+}
+
+// TemporalCorrelationResult holds timing-based correlation signals
+type TemporalCorrelationResult struct {
+	HasTimingPattern    bool    `json:"hasTimingPattern"`    // Automated pattern detected
+	PatternType         string  `json:"patternType"`         // "periodic"/"burst"/"delayed-withdrawal"/"none"
+	IntervalSeconds     float64 `json:"intervalSeconds"`     // Average interval between correlated txs
+	CorrelatedTxids     []string `json:"correlatedTxids"`    // Txids with temporal correlation
+	MixToWithdrawDelay  float64 `json:"mixToWithdrawDelay"`  // Seconds between CoinJoin completion and spend
+	Confidence          float64 `json:"confidence"`          // 0.0 - 1.0
+	TimeBucket          string  `json:"timeBucket"`          // Hour-of-day cluster: "business"/"evening"/"overnight"
+}
+
+// MarkovScoreResult holds absorbing random walk taint scoring
+type MarkovScoreResult struct {
+	StartAddress        string             `json:"startAddress"`
+	AbsorptionProbs     []AbsorptionTarget `json:"absorptionProbs"` // Probability of reaching each absorber
+	MaxHopsTraversed    int                `json:"maxHopsTraversed"`
+	TotalNodesVisited   int                `json:"totalNodesVisited"`
+	ConvergenceReached  bool               `json:"convergenceReached"`
+	PrimaryDestination  string             `json:"primaryDestination"`  // Highest-probability absorber
+	PrimaryProbability  float64            `json:"primaryProbability"`  // Probability of primary destination
+}
+
+// AbsorptionTarget represents a known absorbing state in the Markov chain
+type AbsorptionTarget struct {
+	Address     string  `json:"address"`
+	Label       string  `json:"label"`       // "binance"/"coinbase"/"mixer"/"darknet"/etc.
+	Probability float64 `json:"probability"` // Absorption probability from start
+	HopsAway    int     `json:"hopsAway"`    // Shortest path length
+}
+
+// CrossChainCorrelation holds cross-chain swap correlation data
+type CrossChainCorrelation struct {
+	IsCorrelated       bool    `json:"isCorrelated"`
+	SourceChain        string  `json:"sourceChain"`        // "BTC"/"ETH"/"XMR"/etc.
+	DestChain          string  `json:"destChain"`
+	SourceTxid         string  `json:"sourceTxid"`
+	DestTxid           string  `json:"destTxid"`
+	SourceValue        int64   `json:"sourceValue"`        // In source chain's smallest unit
+	DestValue          int64   `json:"destValue"`
+	ExchangeRate       float64 `json:"exchangeRate"`       // Observed rate at correlation time
+	TimeDeltaSeconds   float64 `json:"timeDeltaSeconds"`   // |t_out - t_in|
+	ValueMatchScore    float64 `json:"valueMatchScore"`    // How well values match after rate conversion
+	Confidence         float64 `json:"confidence"`         // 0.0 - 1.0
+	SwapType           string  `json:"swapType"`           // "atomic"/"exchange"/"dex"/"bridge"
+}
+
+// MempoolIntelResult holds pre-confirmation intelligence
+type MempoolIntelResult struct {
+	FirstSeenUnixMs    int64   `json:"firstSeenUnixMs"`    // Millisecond precision first-seen
+	ConfirmationDelay  float64 `json:"confirmationDelay"`  // Seconds from first-seen to block inclusion
+	RBFAttempts        int     `json:"rbfAttempts"`        // Number of RBF replacements observed
+	FeeBumpRatio       float64 `json:"feeBumpRatio"`       // Final fee / initial fee
+	PropagationDelay   float64 `json:"propagationDelay"`   // Seconds between first and last node sighting
+	InitialFeeRate     float64 `json:"initialFeeRate"`     // Original fee rate before RBF bumps
+	WasMempoolEvicted  bool    `json:"wasMempoolEvicted"`  // Tx was evicted and rebroadcast
 }

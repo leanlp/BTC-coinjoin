@@ -9,12 +9,14 @@
         :root {
             --bg-color: #0b0f19;
             --surface-color: #1a1f2e;
+            --surface-hover: #22283a;
             --text-primary: #f0f2f5;
             --text-secondary: #8b94a5;
             --accent: #00ffcc;
             --accent-glow: rgba(0, 255, 204, 0.3);
             --danger: #ff4757;
             --success: #2ed573;
+            --warning: #ffa502;
             --border-radius: 12px;
         }
 
@@ -77,8 +79,8 @@
         }
 
         main {
-            width: 90%;
-            max-width: 1200px;
+            width: 95%;
+            max-width: 1600px;
         }
 
         .table-container {
@@ -99,6 +101,7 @@
         td {
             padding: 1rem 1.5rem;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            vertical-align: top;
         }
 
         th {
@@ -108,20 +111,72 @@
             text-transform: uppercase;
             letter-spacing: 0.5px;
             background-color: rgba(255, 255, 255, 0.02);
+            position: sticky;
+            top: 0;
+            z-index: 10;
         }
 
-        tr {
+        .tx-row {
             transition: background-color 0.2s ease;
+            cursor: pointer;
         }
 
-        tr:hover {
-            background-color: rgba(255, 255, 255, 0.03);
+        .tx-row:hover {
+            background-color: var(--surface-hover);
+        }
+
+        .tx-row.expanded {
+            background-color: rgba(0, 255, 204, 0.05);
+            border-left: 3px solid var(--accent);
+        }
+
+        /* Detail row for JSON dump */
+        .detail-row {
+            display: none;
+            background-color: #0d111a;
+        }
+
+        .detail-row.open {
+            display: table-row;
+        }
+
+        .detail-cell {
+            padding: 0;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .detail-content {
+            padding: 1.5rem;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.85rem;
+            color: #a5b1c2;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 0;
+        }
+
+        .json-key {
+            color: #f368e0;
+        }
+
+        .json-string {
+            color: #1dd1a1;
+        }
+
+        .json-number {
+            color: #feca57;
+        }
+
+        .json-boolean {
+            color: #ff9f43;
         }
 
         .txid {
             font-family: 'Courier New', Courier, monospace;
             color: var(--accent);
             text-decoration: none;
+            font-weight: bold;
         }
 
         .txid:hover {
@@ -133,7 +188,7 @@
             align-items: center;
             padding: 4px 8px;
             border-radius: 4px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 700;
             text-transform: uppercase;
             background-color: rgba(255, 255, 255, 0.1);
@@ -141,58 +196,60 @@
             margin-bottom: 4px;
         }
 
+        /* Hardware */
         .badge.cuda {
             background: rgba(0, 255, 204, 0.15);
             color: var(--accent);
             border: 1px solid var(--accent);
-            box-shadow: 0 0 10px var(--accent-glow);
         }
 
-        .badge.flag.cj {
-            background: rgba(160, 32, 240, 0.2);
-            color: #d8b4fe;
-            border: 1px solid #d8b4fe;
-        }
-
-        .badge.flag.wp {
-            background: rgba(56, 189, 248, 0.2);
+        /* Layer 1: Deterministic */
+        .badge.l1 {
+            background: rgba(56, 189, 248, 0.15);
             color: #38bdf8;
-            border: 1px solid #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.5);
         }
 
-        .badge.flag.ws {
-            background: rgba(74, 222, 128, 0.2);
-            color: #4ade80;
-            border: 1px solid #4ade80;
+        /* Layer 2: Probabilistic */
+        .badge.l2 {
+            background: rgba(160, 32, 240, 0.15);
+            color: #d8b4fe;
+            border: 1px solid rgba(160, 32, 240, 0.5);
         }
 
-        .badge.flag.reuse {
-            background: rgba(248, 113, 113, 0.2);
-            color: #f87171;
-            border: 1px solid #f87171;
-        }
-
-        .badge.flag.pj {
-            background: rgba(250, 204, 21, 0.2);
+        /* Layer 3: Policy / Suspects */
+        .badge.l3 {
+            background: rgba(250, 204, 21, 0.15);
             color: #facc15;
-            border: 1px solid #facc15;
+            border: 1px solid rgba(250, 204, 21, 0.5);
         }
 
-        .badge.flag.none {
+        /* Layer 4 & 6 & 7 & 8: Intelligence & High Risk */
+        .badge.l-risk {
+            background: rgba(248, 113, 113, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(248, 113, 113, 0.5);
+        }
+
+        .badge.none {
             background: rgba(255, 255, 255, 0.05);
             color: var(--text-secondary);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
+        .score-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
         .score-bar {
-            width: 100px;
+            width: 80px;
             height: 6px;
             background-color: rgba(255, 255, 255, 0.1);
             border-radius: 3px;
             overflow: hidden;
             display: inline-block;
-            vertical-align: middle;
-            margin-right: 10px;
         }
 
         .score-fill {
@@ -206,7 +263,27 @@
         }
 
         .score-fill.medium {
-            background-color: #ffa502;
+            background-color: var(--warning);
+        }
+
+        .time-ms {
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: bold;
+            color: #d1d8e0;
+        }
+
+        /* Value grid for showing stats */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 5px;
+        }
+
+        .stat-grid span {
+            color: var(--text-primary);
         }
 
         @keyframes unshift {
@@ -224,11 +301,6 @@
         .new-row {
             animation: unshift 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
         }
-
-        .time-ms {
-            font-family: 'Courier New', Courier, monospace;
-            font-weight: bold;
-        }
     </style>
 </head>
 
@@ -240,6 +312,8 @@
             <div id="statusIndicator" class="status-dot"></div>
             <span id="statusText">Connecting to Stream...</span>
         </div>
+        <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 5px;">Click any row to view complete
+            backend JSON payload</p>
     </header>
 
     <main>
@@ -247,13 +321,11 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Transaction ID</th>
-                        <th>Topology & Volume</th>
-                        <th>Privacy Score</th>
-                        <th>Forensics (Conclusion)</th>
-                        <th>Inference (LLR)</th>
-                        <th>Proc. Time</th>
-                        <th>Accelerator</th>
+                        <th width="15%">Transaction ID</th>
+                        <th width="15%">Metrics</th>
+                        <th width="15%">Privacy & Inference</th>
+                        <th width="45%">Forensics Flags (L1-L8)</th>
+                        <th width="10%">Compute</th>
                     </tr>
                 </thead>
                 <tbody id="txTableBody">
@@ -267,13 +339,33 @@
         const tableBody = document.getElementById('txTableBody');
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
-        const maxRows = 20; // Maximum number of TXs to display at once
+        const maxRows = 25;
+
+        // Syntax highlighting for JSON
+        function syntaxHighlight(json) {
+            if (typeof json != 'string') {
+                json = JSON.stringify(json, undefined, 4);
+            }
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                let cls = 'json-number';
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) {
+                        cls = 'json-key';
+                    } else {
+                        cls = 'json-string';
+                    }
+                } else if (/true|false/.test(match)) {
+                    cls = 'json-boolean';
+                } else if (/null/.test(match)) {
+                    cls = 'json-boolean';
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            });
+        }
 
         function connectWebSocket() {
-            // Use the same host but switch protocol to ws/wss
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            // Assuming this is served from localhost:5339/dashboard
-            // The API stream endpoint is at /api/v1/stream
             const wsUrl = `${protocol}//${window.location.host}/api/v1/stream`;
 
             const ws = new WebSocket(wsUrl);
@@ -281,13 +373,11 @@
             ws.onopen = () => {
                 statusIndicator.classList.add('connected');
                 statusText.innerText = 'Connected (Live Mempool Stream)';
-                console.log('Connected to RawBlock CUDA Engine stream');
             };
 
             ws.onclose = () => {
                 statusIndicator.classList.remove('connected');
                 statusText.innerText = 'Disconnected. Reconnecting...';
-                // Attempt to reconnect after 3 seconds
                 setTimeout(connectWebSocket, 3000);
             };
 
@@ -312,97 +402,221 @@
             return 'high';
         }
 
-        function getForensicsLabels(flags) {
+        // JS numbers are 64-bit floats, bitwise operators (<<, &) treat them as 32-bit signed ints.
+        // We MUST use BigInt for 64-bit flag masks.
+        const F = {
+            IsSegWit: 1n << 0n,
+            IsTaproot: 1n << 1n,
+            HasSchnorrSig: 1n << 2n,
+            IsWhirlpoolStruct: 1n << 3n,
+
+            LikelyChange: 1n << 10n,
+            LikelyCollabConstruct: 1n << 11n,
+            AddressReuse: 1n << 12n,
+            HasRoundPayment: 1n << 13n,
+            IsConsolidation: 1n << 14n,
+            IsBIP69: 1n << 15n,
+            HighEntropy: 1n << 16n,
+            SuspiciousFee: 1n << 17n,
+            IsPeelChain: 1n << 18n,
+            TimingAnomaly: 1n << 19n,
+
+            IsMuSig2Suspect: 1n << 20n,
+            IsPayjoinSuspect: 1n << 21n,
+            IsSilentPayment: 1n << 22n,
+            IsWasabiSuspect: 1n << 23n,
+            IsJoinMarketBond: 1n << 24n,
+
+            DustAttackSuspect: 1n << 25n,
+            WeakMix: 1n << 26n,
+            IsHubTransaction: 1n << 27n,
+            DustConsolidation: 1n << 28n,
+            HighTraceability: 1n << 29n,
+
+            AncientUTXO: 1n << 30n,
+            KnownService: 1n << 31n,
+            IsMultisig: 1n << 32n,
+            HasOPReturn: 1n << 33n,
+
+            PostMixLeakage: 1n << 34n,
+            BotBehavior: 1n << 35n,
+            HighRisk: 1n << 36n,
+
+            LightningChannel: 1n << 37n,
+            IsCoinbase: 1n << 38n,
+            StrategicConsolidation: 1n << 39n,
+
+            // Phase 18 flags
+            ScriptFingerprint: 1n << 40n,
+            TaintPropagated: 1n << 41n,
+            TemporalCorrelated: 1n << 42n,
+            CrossChainLinked: 1n << 43n,
+            MarkovScored: 1n << 44n,
+            MempoolTracked: 1n << 45n,
+        };
+
+        function getForensicsLabels(flagsNum) {
+            const flags = BigInt(flagsNum || 0);
             const labels = [];
 
-            // Layer 1: Deterministic
-            if (flags & 1) labels.push('<span class="badge flag none">SegWit</span>');
-            if (flags & 2) labels.push('<span class="badge flag none">Taproot</span>');
-            if (flags & 4) labels.push('<span class="badge flag none">Schnorr</span>');
-            if (flags & 8) labels.push('<span class="badge flag wp">Whirlpool</span>');
+            // L1
+            if ((flags & F.IsSegWit) > 0n) labels.push('<span class="badge l1">SegWit</span>');
+            if ((flags & F.IsTaproot) > 0n) labels.push('<span class="badge l1">Taproot</span>');
+            if ((flags & F.HasSchnorrSig) > 0n) labels.push('<span class="badge l1">Schnorr</span>');
+            if ((flags & F.IsWhirlpoolStruct) > 0n) labels.push('<span class="badge l1">Whirlpool Struct</span>');
 
-            // Layer 2: Probabilistic
-            if (flags & 1024) labels.push('<span class="badge flag" style="color:#d8b4fe; border: 1px solid #d8b4fe;">Likely Change</span>');
-            if (flags & 2048) labels.push('<span class="badge flag cj">CoinJoin</span>');
-            if (flags & 4096) labels.push('<span class="badge flag reuse">Address Reuse</span>');
+            // L2
+            if ((flags & F.LikelyChange) > 0n) labels.push('<span class="badge l2">Change Detected</span>');
+            if ((flags & F.LikelyCollabConstruct) > 0n) labels.push('<span class="badge l2">CoinJoin Proxy</span>');
+            if ((flags & F.AddressReuse) > 0n) labels.push('<span class="badge l2">Address Reuse</span>');
+            if ((flags & F.HasRoundPayment) > 0n) labels.push('<span class="badge l2">Round Payment</span>');
+            if ((flags & F.IsConsolidation) > 0n) labels.push('<span class="badge l2">Consolidation</span>');
+            if ((flags & F.IsBIP69) > 0n) labels.push('<span class="badge l2">BIP69 Sorted</span>');
+            if ((flags & F.HighEntropy) > 0n) labels.push('<span class="badge l2">High Entropy</span>');
+            if ((flags & F.SuspiciousFee) > 0n) labels.push('<span class="badge l2">Fee Anomaly</span>');
+            if ((flags & F.IsPeelChain) > 0n) labels.push('<span class="badge l2">Peel Chain</span>');
+            if ((flags & F.TimingAnomaly) > 0n) labels.push('<span class="badge l2">Timing Anomaly</span>');
 
-            // Layer 3: Policy-Gated
-            if (flags & 1048576) labels.push('<span class="badge flag pj">MuSig2 Suspect</span>');
-            if (flags & 2097152) labels.push('<span class="badge flag pj">PayJoin Suspect</span>');
-            if (flags & 4194304) labels.push('<span class="badge flag ws">Silent Pymt</span>');
-            if (flags & 8388608) labels.push('<span class="badge flag ws">WabiSabi Suspect</span>');
-            if (flags & 16777216) labels.push('<span class="badge flag" style="background: rgba(255,165,0,0.2); color: orange; border: 1px solid orange;">JoinMarket Bond</span>');
+            // L3
+            if ((flags & F.IsMuSig2Suspect) > 0n) labels.push('<span class="badge l3">MuSig2</span>');
+            if ((flags & F.IsPayjoinSuspect) > 0n) labels.push('<span class="badge l3">PayJoin Suspect</span>');
+            if ((flags & F.IsSilentPayment) > 0n) labels.push('<span class="badge l3">Silent Pymt</span>');
+            if ((flags & F.IsWasabiSuspect) > 0n) labels.push('<span class="badge l3">WabiSabi</span>');
+            if ((flags & F.IsJoinMarketBond) > 0n) labels.push('<span class="badge l3">JoinMarket Bond</span>');
+
+            // Risk / Intel (L4/L6)
+            if ((flags & F.DustAttackSuspect) > 0n) labels.push('<span class="badge l-risk">Dust Attack</span>');
+            if ((flags & F.WeakMix) > 0n) labels.push('<span class="badge l-risk">Weak Mix</span>');
+            if ((flags & F.IsHubTransaction) > 0n) labels.push('<span class="badge l-risk">Exchange Hub</span>');
+            if ((flags & F.DustConsolidation) > 0n) labels.push('<span class="badge l-risk">Dust Cleanup</span>');
+            if ((flags & F.HighTraceability) > 0n) labels.push('<span class="badge l-risk">Highly Traceable</span>');
+
+            if ((flags & F.PostMixLeakage) > 0n) labels.push('<span class="badge l-risk">Post-Mix Leakage</span>');
+            if ((flags & F.BotBehavior) > 0n) labels.push('<span class="badge l-risk">Bot Behavior</span>');
+            if ((flags & F.HighRisk) > 0n) labels.push('<span class="badge l-risk" style="background:var(--danger);color:#fff">HIGH RISK ENTITY</span>');
+
+            // Deep Intel (L5/L7/L8)
+            if ((flags & F.AncientUTXO) > 0n) labels.push('<span class="badge l1">Ancient UTXO</span>');
+            if ((flags & F.KnownService) > 0n) labels.push('<span class="badge l1">Service KYC</span>');
+            if ((flags & F.IsMultisig) > 0n) labels.push('<span class="badge l2">Multisig</span>');
+            if ((flags & F.HasOPReturn) > 0n) labels.push('<span class="badge l1">OP_RETURN</span>');
+            if ((flags & F.LightningChannel) > 0n) labels.push('<span class="badge l1">Lightning Channel</span>');
+            if ((flags & F.IsCoinbase) > 0n) labels.push('<span class="badge l2">Coinbase</span>');
+            if ((flags & F.StrategicConsolidation) > 0n) labels.push('<span class="badge l-risk">Strategic Batching</span>');
+
+            // Phase 18 Flags
+            if ((flags & F.ScriptFingerprint) > 0n) labels.push('<span class="badge l1">Script Fingerprinted</span>');
+            if ((flags & F.TaintPropagated) > 0n) labels.push('<span class="badge l-risk">Taint Flow Mapped</span>');
+            if ((flags & F.TemporalCorrelated) > 0n) labels.push('<span class="badge l2">Temporal Corridor</span>');
+            if ((flags & F.CrossChainLinked) > 0n) labels.push('<span class="badge l3">Cross-Chain Link</span>');
+            if ((flags & F.MarkovScored) > 0n) labels.push('<span class="badge l-risk">Markov Absorption</span>');
+            if ((flags & F.MempoolTracked) > 0n) labels.push('<span class="badge l1">ZMQ Telemetry</span>');
 
             if (labels.length === 0) {
-                labels.push('<span class="badge flag none">Standard Tx</span>');
+                labels.push('<span class="badge none">Standard Tx</span>');
             }
             return labels.join('');
         }
 
-        function getInferenceHtml(inference) {
-            if (!inference) return '<span style="color:var(--text-secondary); font-size: 0.85rem;">N/A (No Graph)</span>';
-            let confColor = 'var(--text-secondary)';
-            if (inference.confidenceLevel === 'high') confColor = 'var(--success)';
-            if (inference.confidenceLevel === 'medium') confColor = '#ffa502';
-            if (inference.confidenceLevel === 'low') confColor = 'var(--danger)';
-
-            return `<div style="font-size: 0.85rem">
-                <span style="color: ${confColor}; font-weight: 600;">[${inference.confidenceLevel.toUpperCase()}]</span> 
-                <br/>LLR: ${inference.posteriorLlr.toFixed(2)}
-            </div>`;
+        function toggleRow(txid) {
+            const detailRow = document.getElementById(`detail-${txid}`);
+            const mainRow = document.getElementById(`row-${txid}`);
+            if (detailRow.classList.contains('open')) {
+                detailRow.classList.remove('open');
+                mainRow.classList.remove('expanded');
+            } else {
+                detailRow.classList.add('open');
+                mainRow.classList.add('expanded');
+            }
         }
 
+        function extractImportantInference(inf) {
+            if (!inf) return "N/A";
+            return `
+                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">
+                    ${inf.confidenceLevel ? `[${inf.confidenceLevel.toUpperCase()}]` : ''} 
+                    LLR: ${inf.posteriorLlr ? inf.posteriorLlr.toFixed(2) : '0.00'}
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary);">
+                    Cluster Mass: ${inf.clusterMass !== undefined ? inf.clusterMass.toFixed(2) : '-'} <br/>
+                    Risk Node: ${inf.hasRiskNode ? '<span style="color:var(--danger)">True</span>' : 'False'}
+                </div>
+            `;
+        }
+
+        let rowIndexCounter = 0;
+
         function addTransactionRow(data) {
-            const tr = document.createElement('tr');
-            tr.className = 'new-row';
+            rowIndexCounter++;
+            const internalId = `${data.txid}-${rowIndexCounter}`;
 
-            // Format TXID for display
+            const mainTr = document.createElement('tr');
+            mainTr.id = `row-${internalId}`;
+            mainTr.className = 'tx-row new-row';
+            mainTr.onclick = () => toggleRow(internalId);
+
             const shortTxid = `${data.txid.substring(0, 8)}...${data.txid.substring(data.txid.length - 8)}`;
-
-            const scoreClass = getScoreColorClass(data.privacyScore);
-
+            const scoreClass = getScoreColorClass(data.privacyScore || 0);
             const hardwareBadge = data.cudaOffloaded
                 ? `<span class="badge cuda">⚡ RTX CUDA</span>`
                 : `<span class="badge">CPU</span>`;
 
             const forensicsHtml = getForensicsLabels(data.heuristicFlags);
-            const inferenceHtml = getInferenceHtml(data.inference);
+            const btcVol = ((data.totalIn || 0) / 100000000).toFixed(4);
 
-            tr.innerHTML = `
-                <td><a href="https://mempool.space/tx/${data.txid}" target="_blank" class="txid">${shortTxid}</a></td>
+            mainTr.innerHTML = `
                 <td>
-                    <div style="font-weight:600; font-size: 0.95rem; color: var(--text-primary);">${data.numInputs} × ${data.numOutputs}</div>
-                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 5px; line-height: 1.4;">
-                        Vol: <span style="color:#d8b4fe">${(data.totalIn / 100000000).toFixed(4)} BTC</span><br/>
-                        Fee: <span style="color:#facc15">${data.fee} sats</span><br/>
-                        Size: ${data.vsize} vB
+                    <a href="https://mempool.space/tx/${data.txid}" target="_blank" class="txid" onclick="event.stopPropagation()">${shortTxid}</a>
+                </td>
+                <td>
+                    <div style="font-weight:600; font-size: 0.95rem; color: var(--text-primary);">${data.numInputs} In × ${data.numOutputs} Out</div>
+                    <div class="stat-grid">
+                        <div>Vol:</div> <div><span style="color:#d8b4fe">${btcVol} ₿</span></div>
+                        <div>Fee:</div> <div><span style="color:#facc15">${data.fee} sats</span></div>
+                        <div>Size:</div> <div><span>${data.vsize} vB</span></div>
                     </div>
                 </td>
                 <td>
-                    <div class="score-bar"><div class="score-fill ${scoreClass}" style="width: ${data.privacyScore}%"></div></div>
-                    <span>${data.privacyScore}</span> <span style="font-size: 0.8rem; color: #8b94a5;">(AS: ${data.anonSet})</span>
+                    <div class="score-container" style="margin-bottom: 5px;">
+                        <div class="score-bar"><div class="score-fill ${scoreClass}" style="width: ${data.privacyScore || 0}%"></div></div>
+                        <span style="font-weight: 600;">${data.privacyScore || 0}</span>
+                    </div>
+                    ${extractImportantInference(data.inference)}
                 </td>
                 <td>${forensicsHtml}</td>
-                <td>${inferenceHtml}</td>
-                <td class="time-ms">${data.processingTimeMs.toFixed(2)} ms</td>
-                <td>${hardwareBadge}</td>
+                <td>
+                    <div style="margin-bottom: 5px;">${hardwareBadge}</div>
+                    <div class="time-ms">${data.processingTimeMs ? data.processingTimeMs.toFixed(2) : 0} ms</div>
+                </td>
+            `;
+
+            // Create Detail Row (JSON dump)
+            const detailTr = document.createElement('tr');
+            detailTr.id = `detail-${internalId}`;
+            detailTr.className = 'detail-row';
+
+            const jsonDump = syntaxHighlight(data);
+
+            detailTr.innerHTML = `
+                <td colspan="5" class="detail-cell">
+                    <pre class="detail-content">${jsonDump}</pre>
+                </td>
             `;
 
             // Insert at top
-            tableBody.prepend(tr);
+            tableBody.prepend(detailTr);
+            tableBody.prepend(mainTr);
 
-            // Remove animation class after it completes so it isn't reapplied on re-render
             setTimeout(() => {
-                tr.classList.remove('new-row');
+                mainTr.classList.remove('new-row');
             }, 500);
 
-            // Keep table rows limited
-            if (tableBody.children.length > maxRows) {
+            // Cleanup old rows to prevent DOM bloat (each item is 2 rows: main + detail)
+            while (tableBody.children.length > maxRows * 2) {
                 tableBody.removeChild(tableBody.lastChild);
             }
         }
 
-        // Initialize connection
         connectWebSocket();
     </script>
 </body>
