@@ -125,7 +125,7 @@ func ScoreTransaction(tx models.Transaction, result models.PrivacyAnalysisResult
 	}
 
 	// ─── Taint / High risk ───────────────────────────────────────────
-	taintLevel, taintHighRisk := CheckInputsForTaint(tx)
+	taintLevel := result.TaintExposure
 	if taintLevel > 0 {
 		// Continuous taint contribution (0-25 points), robust to partial contamination.
 		riskScore += int(math.Round(math.Min(25.0, taintLevel*25.0)))
@@ -134,10 +134,6 @@ func ScoreTransaction(tx models.Transaction, result models.PrivacyAnalysisResult
 	if (flags & uint64(FlagHighRisk)) > 0 {
 		riskScore += 30
 		signals = append(signals, "tainted_funds")
-	} else if taintHighRisk {
-		// Safety net if analysis flags are stale but taint map has high confidence intel.
-		riskScore += 25
-		signals = append(signals, "taint_high_risk")
 	}
 
 	// ─── Bot behavior ────────────────────────────────────────────────
@@ -180,6 +176,34 @@ func ScoreTransaction(tx models.Transaction, result models.PrivacyAnalysisResult
 	if assessment.IsCoinJoin && assessment.IsWatchlistHit && totalValue > 100000000 {
 		riskScore += 20
 		signals = append(signals, "compound_escalation")
+	}
+
+	// ─── Phase 18: Advanced Forensics Signals ────────────────────────
+	if (flags & uint64(FlagScriptFingerprint)) > 0 {
+		riskScore += 5
+		signals = append(signals, "script_fingerprinted")
+	}
+	if (flags & uint64(FlagTaintPropagated)) > 0 {
+		riskScore += 10
+		signals = append(signals, "taint_propagated")
+	}
+	if (flags & uint64(FlagTemporalCorrelated)) > 0 {
+		riskScore += 8
+		signals = append(signals, "temporal_correlation")
+	}
+	if (flags & uint64(FlagCrossChainLinked)) > 0 {
+		riskScore += 15
+		signals = append(signals, "cross_chain_linked")
+	}
+	if (flags & uint64(FlagMarkovScored)) > 0 {
+		riskScore += 5
+		signals = append(signals, "markov_scored")
+	}
+
+	// ─── Phase 19: Intersection Attack Vulnerability ─────────────────
+	if (flags & uint64(FlagIntersectionVulnerable)) > 0 {
+		riskScore += 25
+		signals = append(signals, "intersection_vulnerable")
 	}
 
 	// Cap at 100

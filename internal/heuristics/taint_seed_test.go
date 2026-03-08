@@ -79,8 +79,10 @@ func TestScoreTransaction_TaintSignalsEscalateRisk(t *testing.T) {
 		},
 	}
 	result := models.PrivacyAnalysisResult{
-		Txid:         tx.Txid,
-		PrivacyScore: 50,
+		Txid:           tx.Txid,
+		PrivacyScore:   50,
+		TaintExposure:  1.0,
+		HeuristicFlags: uint64(FlagHighRisk),
 	}
 
 	assessment := ScoreTransaction(tx, result, nil)

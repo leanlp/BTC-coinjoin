@@ -105,12 +105,13 @@ const (
 
 // Layer 8: Advanced Forensics (Phase 18 — Deep analysis capabilities)
 const (
-	FlagScriptFingerprint = 1 << 40 // Deep script opcode fingerprint computed
-	FlagTaintPropagated   = 1 << 41 // Taint flow analysis completed
-	FlagTemporalCorrelated = 1 << 42 // Temporal correlation pattern detected
-	FlagCrossChainLinked  = 1 << 43 // Cross-chain swap correlation established
-	FlagMarkovScored      = 1 << 44 // Markov absorption score computed
-	FlagMempoolTracked    = 1 << 45 // Mempool first-seen telemetry recorded
+	FlagScriptFingerprint       = 1 << 40 // Deep script opcode fingerprint computed
+	FlagTaintPropagated         = 1 << 41 // Taint flow analysis completed
+	FlagTemporalCorrelated      = 1 << 42 // Temporal correlation pattern detected
+	FlagCrossChainLinked        = 1 << 43 // Cross-chain swap correlation established
+	FlagMarkovScored            = 1 << 44 // Markov absorption score computed
+	FlagMempoolTracked          = 1 << 45 // Mempool first-seen telemetry recorded
+	FlagIntersectionVulnerable  = 1 << 46 // Cross-round intersection reduces effective anonset ≤ 3
 )
 
 const CurrentSnapshotID = 202602238 // Version of the Heuristics Engine (Phase 18)

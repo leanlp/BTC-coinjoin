@@ -324,10 +324,18 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 		}
 	}
 
-	// PayJoin: 2 inputs, 2+ outputs, output matches input value
+	// PayJoin: 2 inputs, 2+ outputs, any output matches any input value
 	if !isCj && len(tx.Inputs) == 2 && len(tx.Outputs) >= 2 {
-		if tx.Outputs[0].Value == tx.Inputs[0].Value {
-			res.HeuristicFlags |= FlagIsPayjoinSuspect
+		for _, out := range tx.Outputs {
+			for _, in := range tx.Inputs {
+				if out.Value == in.Value && in.Value > 0 {
+					res.HeuristicFlags |= FlagIsPayjoinSuspect
+					break
+				}
+			}
+			if (res.HeuristicFlags & FlagIsPayjoinSuspect) > 0 {
+				break
+			}
 		}
 	}
 
@@ -578,9 +586,6 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 		if equalInputCount >= 2 {
 			res.HeuristicFlags |= FlagPostMixLeakage
 			res.PrivacyScore -= 10
-			if res.PrivacyScore < 0 {
-				res.PrivacyScore = 0
-			}
 		}
 	}
 
@@ -629,9 +634,6 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 		res.HeuristicFlags |= FlagStrategicConsolidation
 		// Consolidation reduces privacy (links multiple UTXOs)
 		res.PrivacyScore -= 8
-		if res.PrivacyScore < 0 {
-			res.PrivacyScore = 0
-		}
 	}
 
 	// ════════════════════════════════════════════════════════════════════
@@ -687,6 +689,56 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 		taintResult := PropagateTaintAdvanced(tx, "proportional")
 		res.TaintAnalysis = &taintResult
 		res.HeuristicFlags |= uint64(FlagTaintPropagated)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 34: Intersection Attack Analysis (Phase 19 — Cross-TX)
+	// If this is a CoinJoin, register participants for cross-round linkage.
+	// Check if any output addresses are vulnerable from prior rounds.
+	// ════════════════════════════════════════════════════════════════════
+	if isCj {
+		registry := GetGlobalIntersectionRegistry()
+		registry.RegisterCoinJoinParticipants(tx, res)
+
+		// Check output addresses for intersection vulnerability
+		for _, out := range tx.Outputs {
+			if out.Address == "" {
+				continue
+			}
+			if registry.GetRoundCount(out.Address) >= 2 {
+				effective := registry.GetEffectiveAnonSet(out.Address)
+				if effective > 0 && effective <= 3 {
+					res.HeuristicFlags |= uint64(FlagIntersectionVulnerable)
+					// Severe privacy reduction: anonset collapsed via cross-round analysis
+					res.PrivacyScore -= 25
+					break
+				}
+			}
+		}
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 35: Probabilistic UTXO Ownership Matrix (Phase 19 — Boltzmann)
+	// Computes P(input_i → output_j) for every pair — the gold standard
+	// forensics capability for quantifying CoinJoin linkability.
+	// ════════════════════════════════════════════════════════════════════
+	if isCj && len(tx.Inputs) <= 20 && len(tx.Outputs) <= 20 {
+		ownershipResult := ComputeOwnershipMatrix(tx)
+		res.OwnershipMatrix = &ownershipResult
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 36: Bayesian Signal Fusion (Phase 19 — Enterprise Grade)
+	// Combines ALL pipeline signals into calibrated posterior probabilities
+	// for wallet attribution, privacy strength, and threat assessment.
+	// ════════════════════════════════════════════════════════════════════
+	fusionEngine := GetGlobalFusionEngine()
+	fusionVerdict := fusionEngine.FuseSignals(tx, res)
+	res.FusionVerdict = &fusionVerdict
+
+	// Override wallet family if fusion yields higher confidence
+	if fusionVerdict.WalletConfidence > 0.6 && fusionVerdict.WalletFamily != "unknown" {
+		res.WalletFamily = fusionVerdict.WalletFamily
 	}
 
 	// ════════════════════════════════════════════════════════════════════

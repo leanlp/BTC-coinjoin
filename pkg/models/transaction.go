@@ -83,6 +83,9 @@ type PrivacyAnalysisResult struct {
 	TemporalSignals   *TemporalCorrelationResult  `json:"temporalSignals,omitempty"`  // Timing correlation
 	MempoolIntel      *MempoolIntelResult         `json:"mempoolIntel,omitempty"`     // Pre-confirmation intelligence
 	TaintExposure     float64                     `json:"taintExposure,omitempty"`    // Weighted taint ratio [0,1]
+	// Phase 19: World-Class Forensics
+	OwnershipMatrix   interface{}                 `json:"ownershipMatrix,omitempty"`  // Boltzmann P(i→j) ownership probabilities
+	FusionVerdict     interface{}                 `json:"fusionVerdict,omitempty"`    // Bayesian multi-signal fusion verdict
 }
 
 // EntropyResult holds Boltzmann transaction entropy analysis
