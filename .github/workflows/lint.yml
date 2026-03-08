@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+
 jobs:
   golangci:
     name: lint
@@ -15,7 +18,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
+          cache: true
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.5
+          args: --timeout=5m

@@ -86,6 +86,13 @@ type PrivacyAnalysisResult struct {
 	// Phase 19: World-Class Forensics
 	OwnershipMatrix   interface{}                 `json:"ownershipMatrix,omitempty"`  // Boltzmann P(i→j) ownership probabilities
 	FusionVerdict     interface{}                 `json:"fusionVerdict,omitempty"`    // Bayesian multi-signal fusion verdict
+	// Phase 20: Advanced Scammer Tracking & Financial Crime
+	WalletFingerprint interface{}                 `json:"walletFingerprint,omitempty"` // Compound nVersion+nLockTime+nSequence fingerprint
+	CoordinatorID     interface{}                 `json:"coordinatorId,omitempty"`     // CoinJoin protocol identification + Sybil analysis
+	ScammerProfile    interface{}                 `json:"scammerProfile,omitempty"`    // Consolidation + velocity + self-spend analysis
+	LaunderingFlags   interface{}                 `json:"launderingFlags,omitempty"`   // Fan-out/fan-in/layering/structuring
+	ValueCrosslinks   interface{}                 `json:"valueCrosslinks,omitempty"`   // Cross-TX value fingerprint matches
+	PostMixScore      float64                     `json:"postMixScore,omitempty"`      // 0-1 post-mix privacy effectiveness
 }
 
 // EntropyResult holds Boltzmann transaction entropy analysis

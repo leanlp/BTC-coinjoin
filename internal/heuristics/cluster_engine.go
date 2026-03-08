@@ -1,8 +1,24 @@
 package heuristics
 
 import (
+	"sync"
+
 	"github.com/rawblock/coinjoin-engine/pkg/models"
 )
+
+var (
+	globalClusterEngine *ClusterEngine
+	clusterEngineOnce   sync.Once
+)
+
+// GetGlobalClusterEngine returns the singleton cluster engine instance.
+// Thread-safe via sync.Once.
+func GetGlobalClusterEngine() *ClusterEngine {
+	clusterEngineOnce.Do(func() {
+		globalClusterEngine = NewClusterEngine()
+	})
+	return globalClusterEngine
+}
 
 // Address Clustering Engine (Union-Find)
 //

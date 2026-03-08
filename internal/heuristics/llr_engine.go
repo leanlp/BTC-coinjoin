@@ -114,7 +114,15 @@ const (
 	FlagIntersectionVulnerable  = 1 << 46 // Cross-round intersection reduces effective anonset ≤ 3
 )
 
-const CurrentSnapshotID = 202602238 // Version of the Heuristics Engine (Phase 18)
+// Layer 9: Scammer Tracking & Financial Crime (Phase 20)
+const (
+	FlagConsolidation     = 1 << 47 // Suspicious UTXO consolidation (cash-out pattern)
+	FlagSelfSpend         = 1 << 48 // All outputs belong to same cluster as inputs
+	FlagLaunderingPattern = 1 << 49 // Fan-out/fan-in/layering/structuring detected
+	FlagAddressPoisoning  = 1 << 50 // Address poisoning attack detected
+)
+
+const CurrentSnapshotID = 202603081 // Version of the Heuristics Engine (Phase 20)
 
 // ProbToLLR converts a real probability [0,1] into a Log-Likelihood Ratio.
 // LLR = log10( P(E|H1) / P(E|H0) )

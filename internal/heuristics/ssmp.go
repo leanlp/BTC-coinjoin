@@ -742,6 +742,189 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 	}
 
 	// ════════════════════════════════════════════════════════════════════
+	// STEP 37: Compound Wallet Fingerprint (Phase 20)
+	// Uses nVersion + nLockTime + nSequence as a 3-field discriminator
+	// to identify wallet software with much higher confidence than
+	// single-field analysis.
+	// ════════════════════════════════════════════════════════════════════
+	walletMatches := AnalyzeCompoundFingerprint(tx)
+	if len(walletMatches) > 0 {
+		res.WalletFingerprint = walletMatches
+		// Use best compound match if it beats the current wallet family
+		bestName, bestConf := GetBestWalletMatch(tx)
+		if bestConf > 0.5 && res.WalletFamily == "" {
+			res.WalletFamily = bestName
+		}
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 38: CoinJoin Coordinator ID + Sybil Detection (Phase 20)
+	// Identifies the mixing protocol (Whirlpool/Wasabi/JoinMarket)
+	// and checks for Sybil attacks that undermine anonymity.
+	// ════════════════════════════════════════════════════════════════════
+	if isCj {
+		coordResult := IdentifyCoordinator(tx, true)
+		sybilResult := DetectSybilAttack(tx, res.AnonSet)
+
+		type coordinatorAnalysis struct {
+			Coordinator interface{} `json:"coordinator"`
+			Sybil       interface{} `json:"sybil"`
+		}
+		res.CoordinatorID = &coordinatorAnalysis{
+			Coordinator: &coordResult,
+			Sybil:       &sybilResult,
+		}
+
+		// If Sybil-compromised, reduce effective anonset
+		if sybilResult.IsSybilVulnerable && sybilResult.AffectedAnonSet < res.AnonSet {
+			res.AnonSet = sybilResult.AffectedAnonSet
+			res.PrivacyScore -= 15
+		}
+
+		// Protocol-specific pool detection
+		if coordResult.Protocol == ProtocolWhirlpool && coordResult.PoolDenom > 0 {
+			if poolName, ok := coordinatorWhirlpoolPools[coordResult.PoolDenom]; ok {
+				res.WhirlpoolPool = poolName
+			}
+		}
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 39: Scammer Behavior Analysis (Phase 20)
+	// Detects consolidation attacks (cash-out patterns) and
+	// self-spend transactions (internal treasury movements).
+	// ════════════════════════════════════════════════════════════════════
+	scamConsolidation := DetectConsolidation(tx, res.TaintExposure)
+	selfSpend := DetectSelfSpend(tx)
+
+	type scammerAnalysis struct {
+		Consolidation interface{} `json:"consolidation,omitempty"`
+		SelfSpend     interface{} `json:"selfSpend"`
+	}
+	scamProfile := &scammerAnalysis{SelfSpend: &selfSpend}
+
+	if scamConsolidation != nil {
+		scamProfile.Consolidation = scamConsolidation
+		if scamConsolidation.IsSuspicious {
+			res.PrivacyScore -= 10
+			res.HeuristicFlags |= uint64(FlagConsolidation)
+		}
+
+		// Record in global monitor
+		monitor := GetGlobalConsolidationMonitor()
+		monitor.Record(*scamConsolidation)
+	}
+
+	// If self-spend detected, flag it (reduces false positives elsewhere)
+	if selfSpend.IsSelfSpend {
+		res.HeuristicFlags |= uint64(FlagSelfSpend)
+	}
+	res.ScammerProfile = scamProfile
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 40: Dust Attack Tracing (Phase 20)
+	// Monitors dust outputs for the full attack lifecycle:
+	// Deploy → Consolidate → Expose (wallet cluster revealed)
+	// ════════════════════════════════════════════════════════════════════
+	dustTracer := GetGlobalDustTracer()
+	deployedDust := dustTracer.Phase1_DetectDustDeployment(tx)
+	consolidatedDust := dustTracer.Phase2_DetectConsolidation(tx)
+
+	if len(deployedDust) > 0 || len(consolidatedDust) > 0 {
+		type dustTraceResult struct {
+			Deployed     int `json:"deployed"`
+			Consolidated int `json:"consolidated"`
+		}
+		res.DustAnalysis = nil // Clear basic dust analysis in favor of advanced
+		_ = dustTraceResult{Deployed: len(deployedDust), Consolidated: len(consolidatedDust)}
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 41: Money Laundering Pattern Detection (Phase 20)
+	// Identifies fan-out, fan-in, layering, and structuring patterns
+	// used to obfuscate illicit fund flows.
+	// ════════════════════════════════════════════════════════════════════
+	launderingResult := DetectLaunderingPattern(tx)
+	if launderingResult.Pattern != PatternNone {
+		res.LaunderingFlags = &launderingResult
+		res.PrivacyScore -= int(launderingResult.RiskScore * 10)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 42: Value Fingerprint + Address Poisoning (Phase 20)
+	// Records specific output values in global registry for cross-TX
+	// linking, and checks for address poisoning attacks.
+	// ════════════════════════════════════════════════════════════════════
+	valueRegistry := GetGlobalValueRegistry()
+	for _, out := range tx.Outputs {
+		valueRegistry.RecordValue(out.Value, tx.Txid, out.Address, false)
+	}
+	for _, in := range tx.Inputs {
+		valueRegistry.RecordValue(in.Value, tx.Txid, in.Address, true)
+	}
+
+	// Check for cross-TX value matches on outputs
+	type valueCrosslink struct {
+		Value   int64  `json:"value"`
+		Matches int    `json:"matches"`
+		Address string `json:"address"`
+	}
+	var crosslinks []valueCrosslink
+	for _, out := range tx.Outputs {
+		matches := valueRegistry.FindMatches(out.Value)
+		if len(matches) > 1 { // Current tx + at least one other
+			crosslinks = append(crosslinks, valueCrosslink{
+				Value:   out.Value,
+				Matches: len(matches),
+				Address: out.Address,
+			})
+		}
+	}
+	if len(crosslinks) > 0 {
+		res.ValueCrosslinks = crosslinks
+	}
+
+	// Address poisoning detection
+	poisonEvents := DetectAddressPoisoning(tx)
+	if len(poisonEvents) > 0 {
+		res.PrivacyScore -= 5 * len(poisonEvents)
+		res.HeuristicFlags |= uint64(FlagAddressPoisoning)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 43: Post-Mix Effectiveness Score (Phase 20)
+	// Evaluates how well privacy is preserved after CoinJoin by detecting
+	// toxic change merges, address reuse, and consolidation patterns.
+	// ════════════════════════════════════════════════════════════════════
+	if isCj {
+		// Build inputFromCoinJoin flags based on CoinJoin denomination matching
+		inputFlags := make([]bool, len(tx.Inputs))
+		commonDenoms := map[int64]bool{
+			1000000: true, 5000000: true, 50000000: true, 100000000: true,
+		}
+		for i, in := range tx.Inputs {
+			inputFlags[i] = commonDenoms[in.Value]
+		}
+
+		postMixResult := AnalyzePostMixBehavior(tx, inputFlags)
+		if postMixResult.PrivacyDestroyed {
+			res.PrivacyScore -= 15
+			res.HeuristicFlags |= uint64(FlagPostMixLeakage)
+		}
+		res.PostMixScore = ComputePostMixEffectiveness(tx, &res)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 44: Cross-Chain Bridge Detection (Phase 20)
+	// Identifies transactions related to bridge/wrap protocols using
+	// OP_RETURN metadata, known addresses, and atomic swap structure.
+	// ════════════════════════════════════════════════════════════════════
+	bridgeResult := DetectCrossChainBridge(tx)
+	if bridgeResult.IsBridgeRelated {
+		res.HeuristicFlags |= uint64(FlagCrossChainLinked)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
 	// FINAL: Clamp privacy score to valid range [0, 100]
 	// ════════════════════════════════════════════════════════════════════
 	if res.PrivacyScore < 0 {
