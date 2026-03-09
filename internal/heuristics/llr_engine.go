@@ -122,7 +122,15 @@ const (
 	FlagAddressPoisoning  = 1 << 50 // Address poisoning attack detected
 )
 
-const CurrentSnapshotID = 202603081 // Version of the Heuristics Engine (Phase 20)
+// Layer 10: Enterprise & Classification (Phase 21)
+const (
+	FlagCoinJoinDetected = 1 << 51 // CoinJoin transaction detected by ML or heuristic
+	FlagSanctionedEntity = 1 << 52 // Address on OFAC/EU sanctions list
+	FlagMixerService     = 1 << 53 // Non-CoinJoin mixing service detected
+	FlagDepositAddress   = 1 << 54 // Exchange deposit address pattern detected
+)
+
+const CurrentSnapshotID = 202603083 // Version of the Heuristics Engine (Phase 22)
 
 // ProbToLLR converts a real probability [0,1] into a Log-Likelihood Ratio.
 // LLR = log10( P(E|H1) / P(E|H0) )

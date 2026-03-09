@@ -137,6 +137,9 @@ func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hu
 			forensics.GET("/temporal/:txid", handler.handleTemporalCorrelation)
 			forensics.GET("/intersection/:address", handler.handleIntersectionAnalysis)
 		}
+
+		// ── Phase 22: ML, Risk & Compliance API ──────────────────
+		registerPhase22Routes(auth, handler)
 	}
 
 	// Serve Static Dashboard

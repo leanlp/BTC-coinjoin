@@ -68,3 +68,41 @@ jobs:
 
     - name: Run go vet
       run: go vet ./...
+
+  benchmark:
+    name: Pipeline Benchmark
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.x'
+        cache: true
+
+    - name: Run Benchmarks
+      run: go test -bench=. -benchmem -count=1 -run='^$' ./internal/heuristics/ 2>&1 | tee benchmark.txt || true
+
+    - name: Upload Benchmark Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark.txt
+        retention-days: 30
+
+    - name: Check Pipeline Step Count
+      run: |
+        STEPS=$(grep -c "STEP [0-9]" internal/heuristics/ssmp.go || echo "0")
+        echo "Pipeline steps: ${STEPS}"
+        if [ "$STEPS" -lt 45 ]; then
+          echo "⚠️ Expected 52+ pipeline steps, found ${STEPS}"
+        else
+          echo "✅ Pipeline has ${STEPS} steps"
+        fi
+
+    - name: Check Flag Count
+      run: |
+        FLAGS=$(grep -c "Flag[A-Z].*= 1 <<" internal/heuristics/llr_engine.go || echo "0")
+        echo "Heuristic flags: ${FLAGS}"
+        echo "✅ Engine has ${FLAGS} heuristic flag bits"

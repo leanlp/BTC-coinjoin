@@ -925,6 +925,100 @@ func AnalyzeTx(tx models.Transaction) models.PrivacyAnalysisResult {
 	}
 
 	// ════════════════════════════════════════════════════════════════════
+	// STEP 45: ML Feature Extraction & Classification (Phase 22)
+	// Extracts 30+ numerical features and classifies the transaction type
+	// using a rule-based decision tree (coinjoin/payment/consolidation).
+	// ════════════════════════════════════════════════════════════════════
+	mlFeatures := ExtractFeatures(tx)
+	classification := ClassifyTransaction(mlFeatures)
+	if classification.IsCoinJoin && classification.Confidence > 0.8 {
+		res.HeuristicFlags |= uint64(FlagCoinJoinDetected)
+		if !isCj {
+			// ML detected CoinJoin that heuristics missed → boost
+			res.AnonSet += int(classification.Confidence * 3)
+		}
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 46: Statistical Anomaly Detection (Phase 22)
+	// Uses Welford's online algorithm to track running feature statistics
+	// and flags transactions with Z-scores exceeding 3σ.
+	// ════════════════════════════════════════════════════════════════════
+	anomalyDet := GetGlobalAnomalyDetector()
+	anomalyDet.RecordFeatures(mlFeatures)
+	anomalyResult := anomalyDet.DetectAnomalies(mlFeatures)
+	if anomalyResult.IsAnomaly {
+		res.PrivacyScore -= int(anomalyResult.AnomalyScore * 10)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 47: Deposit Address Heuristic (Phase 22)
+	// Detects exchange deposit flows by identifying one-time addresses
+	// that immediately forward funds to consolidation wallets.
+	// ════════════════════════════════════════════════════════════════════
+	depositEngine := GetGlobalDepositEngine()
+	depositEngine.RecordTransaction(tx)
+	depositPatterns := depositEngine.DetectDepositPattern(tx)
+	if len(depositPatterns) > 0 {
+		res.HeuristicFlags |= uint64(FlagDepositAddress)
+		res.PrivacyScore -= 10
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 48: Mixer Service Fingerprinting (Phase 22)
+	// Detects non-CoinJoin mixers like ChipMixer (power-of-2 denoms),
+	// generic tumblers (equal outputs + timing), and known services.
+	// ════════════════════════════════════════════════════════════════════
+	mixerResult := DetectMixerService(tx)
+	if mixerResult.IsMixer {
+		res.HeuristicFlags |= uint64(FlagMixerService)
+		res.PrivacyScore -= 15
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 49: Darknet Market Pattern Detection (Phase 22)
+	// Checks for known market withdrawal fees, structured amounts,
+	// and tumbler output patterns indicative of darknet activity.
+	// ════════════════════════════════════════════════════════════════════
+	darknetPatterns := DetectDarknetPatterns(tx)
+	for _, dp := range darknetPatterns {
+		if dp.Confidence > 0.4 {
+			res.PrivacyScore -= 5
+			res.HeuristicFlags |= uint64(FlagHighRisk)
+		}
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 50: SIGHASH Flag Analysis (Phase 22)
+	// Inspects ScriptSig for unusual SIGHASH flags (ANYONECANPAY, NONE,
+	// SINGLE) which may indicate collaborative construction or exploit.
+	// ════════════════════════════════════════════════════════════════════
+	sigHashResult := AnalyzeSigHash(tx)
+	if sigHashResult.HasUnusual {
+		res.PrivacyScore -= 5
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 51: Risk Engine Evaluation (Phase 22)
+	// Runs all enabled risk indicators against the transaction and
+	// computes a weighted composite risk score (max+avg formula).
+	// ════════════════════════════════════════════════════════════════════
+	riskEngine := GetGlobalRiskEngine()
+	riskProfile := riskEngine.EvaluateRisk(tx, &res)
+	if riskProfile.RiskLevel == "critical" || riskProfile.RiskLevel == "high" {
+		res.PrivacyScore -= int(riskProfile.OverallScore / 10)
+		res.HeuristicFlags |= uint64(FlagHighRisk)
+	}
+
+	// ════════════════════════════════════════════════════════════════════
+	// STEP 52: Alert Processing (Phase 22)
+	// Evaluates the risk profile against alert rules and emits alerts
+	// for sanctions hits, high-risk txs, mixer usage, and whale txs.
+	// ════════════════════════════════════════════════════════════════════
+	alertEngine := GetGlobalRiskAlertEngine()
+	alertEngine.ProcessTransaction(tx, riskProfile)
+
+	// ════════════════════════════════════════════════════════════════════
 	// FINAL: Clamp privacy score to valid range [0, 100]
 	// ════════════════════════════════════════════════════════════════════
 	if res.PrivacyScore < 0 {
