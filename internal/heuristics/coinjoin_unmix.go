@@ -42,6 +42,9 @@ func AnalyzeUnmixability(tx models.Transaction, isCoinJoin bool) models.UnmixRes
 	// Build linkability matrix: which inputs can fund which outputs?
 	linkMatrix := buildLinkabilityMatrix(tx)
 
+	// Track which outputs are already counted to avoid double-counting
+	countedOutputs := make(map[int]bool)
+
 	// Count unmixable outputs (outputs funded by exactly 1 input/subset)
 	for outIdx := range tx.Outputs {
 		eligibleInputs := 0
@@ -53,6 +56,7 @@ func AnalyzeUnmixability(tx models.Transaction, isCoinJoin bool) models.UnmixRes
 		if eligibleInputs == 1 {
 			result.DeterministicLinks++
 			result.UnmixableOutputs++
+			countedOutputs[outIdx] = true
 		} else if eligibleInputs <= 2 {
 			// Very weak — only 2 possible funders
 			result.WeakParticipants++
@@ -60,21 +64,20 @@ func AnalyzeUnmixability(tx models.Transaction, isCoinJoin bool) models.UnmixRes
 	}
 
 	// Also check for unique output values (strongest signal)
+	// Only count outputs not already counted from the linkability analysis
 	outputValues := make(map[int64]int)
 	for _, out := range tx.Outputs {
 		outputValues[out.Value]++
 	}
-	for _, out := range tx.Outputs {
+	for outIdx, out := range tx.Outputs {
+		if countedOutputs[outIdx] {
+			continue // Already counted above
+		}
 		if outputValues[out.Value] == 1 {
 			// This output has a unique value — highly linkable
-			// Check if it can only be funded by specific inputs
 			result.UnmixableOutputs++
+			countedOutputs[outIdx] = true
 		}
-	}
-
-	// Deduplicate unmixable count
-	if result.UnmixableOutputs > len(tx.Outputs) {
-		result.UnmixableOutputs = len(tx.Outputs)
 	}
 
 	// Compute linkability score (0.0 = perfect, 1.0 = fully linkable)
@@ -90,7 +93,8 @@ func AnalyzeUnmixability(tx models.Transaction, isCoinJoin bool) models.UnmixRes
 
 // buildLinkabilityMatrix creates an N×M boolean matrix where
 // matrix[i][j] = true if input i can potentially fund output j.
-// An input can fund an output if input.Value >= output.Value.
+// Checks both single-input funding (input.Value >= output.Value)
+// and pair-input funding (input[i] + input[k] >= output.Value).
 func buildLinkabilityMatrix(tx models.Transaction) [][]bool {
 	nIn := len(tx.Inputs)
 	nOut := len(tx.Outputs)
@@ -99,8 +103,19 @@ func buildLinkabilityMatrix(tx models.Transaction) [][]bool {
 	for i := range tx.Inputs {
 		matrix[i] = make([]bool, nOut)
 		for j := range tx.Outputs {
-			// Basic check: can this input fund this output?
-			matrix[i][j] = tx.Inputs[i].Value >= tx.Outputs[j].Value
+			// Basic check: can this input alone fund this output?
+			if tx.Inputs[i].Value >= tx.Outputs[j].Value {
+				matrix[i][j] = true
+				continue
+			}
+			// Subset-sum check: can this input + any other input fund this output?
+			// This reduces false unmixability for multi-input funded outputs.
+			for k := 0; k < nIn; k++ {
+				if k != i && tx.Inputs[i].Value+tx.Inputs[k].Value >= tx.Outputs[j].Value {
+					matrix[i][j] = true
+					break
+				}
+			}
 		}
 	}
 	return matrix

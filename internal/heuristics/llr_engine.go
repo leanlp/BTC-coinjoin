@@ -105,15 +105,32 @@ const (
 
 // Layer 8: Advanced Forensics (Phase 18 — Deep analysis capabilities)
 const (
-	FlagScriptFingerprint = 1 << 40 // Deep script opcode fingerprint computed
-	FlagTaintPropagated   = 1 << 41 // Taint flow analysis completed
-	FlagTemporalCorrelated = 1 << 42 // Temporal correlation pattern detected
-	FlagCrossChainLinked  = 1 << 43 // Cross-chain swap correlation established
-	FlagMarkovScored      = 1 << 44 // Markov absorption score computed
-	FlagMempoolTracked    = 1 << 45 // Mempool first-seen telemetry recorded
+	FlagScriptFingerprint       = 1 << 40 // Deep script opcode fingerprint computed
+	FlagTaintPropagated         = 1 << 41 // Taint flow analysis completed
+	FlagTemporalCorrelated      = 1 << 42 // Temporal correlation pattern detected
+	FlagCrossChainLinked        = 1 << 43 // Cross-chain swap correlation established
+	FlagMarkovScored            = 1 << 44 // Markov absorption score computed
+	FlagMempoolTracked          = 1 << 45 // Mempool first-seen telemetry recorded
+	FlagIntersectionVulnerable  = 1 << 46 // Cross-round intersection reduces effective anonset ≤ 3
 )
 
-const CurrentSnapshotID = 202602238 // Version of the Heuristics Engine (Phase 18)
+// Layer 9: Scammer Tracking & Financial Crime (Phase 20)
+const (
+	FlagConsolidation     = 1 << 47 // Suspicious UTXO consolidation (cash-out pattern)
+	FlagSelfSpend         = 1 << 48 // All outputs belong to same cluster as inputs
+	FlagLaunderingPattern = 1 << 49 // Fan-out/fan-in/layering/structuring detected
+	FlagAddressPoisoning  = 1 << 50 // Address poisoning attack detected
+)
+
+// Layer 10: Enterprise & Classification (Phase 21)
+const (
+	FlagCoinJoinDetected = 1 << 51 // CoinJoin transaction detected by ML or heuristic
+	FlagSanctionedEntity = 1 << 52 // Address on OFAC/EU sanctions list
+	FlagMixerService     = 1 << 53 // Non-CoinJoin mixing service detected
+	FlagDepositAddress   = 1 << 54 // Exchange deposit address pattern detected
+)
+
+const CurrentSnapshotID = 202603083 // Version of the Heuristics Engine (Phase 22)
 
 // ProbToLLR converts a real probability [0,1] into a Log-Likelihood Ratio.
 // LLR = log10( P(E|H1) / P(E|H0) )

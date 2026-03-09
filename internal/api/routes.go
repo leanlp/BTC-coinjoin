@@ -135,7 +135,11 @@ func SetupRouter(dbStore *db.PostgresStore, btcClient *bitcoin.Client, wsHub *Hu
 			forensics.GET("/script/:txid", handler.handleScriptFingerprint)
 			forensics.POST("/cross-chain", handler.handleCrossChainCorrelation)
 			forensics.GET("/temporal/:txid", handler.handleTemporalCorrelation)
+			forensics.GET("/intersection/:address", handler.handleIntersectionAnalysis)
 		}
+
+		// ── Phase 22: ML, Risk & Compliance API ──────────────────
+		registerPhase22Routes(auth, handler)
 	}
 
 	// Serve Static Dashboard
@@ -616,6 +620,30 @@ func (h *APIHandler) handleTemporalCorrelation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"txid":     txid,
 		"temporal": result,
+	})
+}
+
+// handleIntersectionAnalysis returns cross-round intersection analysis for an address.
+// GET /api/v1/forensics/intersection/:address
+func (h *APIHandler) handleIntersectionAnalysis(c *gin.Context) {
+	address := c.Param("address")
+	if address == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "address parameter is required"})
+		return
+	}
+
+	registry := heuristics.GetGlobalIntersectionRegistry()
+	result := registry.ComputeIntersection(address)
+
+	totalRounds, totalAddresses := registry.Stats()
+
+	c.JSON(http.StatusOK, gin.H{
+		"address":      address,
+		"intersection": result,
+		"registry": gin.H{
+			"totalRoundsTracked":    totalRounds,
+			"totalAddressesTracked": totalAddresses,
+		},
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/rawblock/coinjoin-engine/internal/api"
 	"github.com/rawblock/coinjoin-engine/internal/bitcoin"
@@ -18,26 +19,32 @@ type Poller struct {
 	btcClient *bitcoin.Client
 	wsHub     *api.Hub
 	dbStore   *db.PostgresStore
-	seenTXs   map[string]bool
+	seenTXs   map[string]time.Time
 	Watchlist *heuristics.AddressWatchlist
 	AlertMgr  *heuristics.AlertManager
 }
 
 // StreamPayload represents the real-time data sent to the dashboard UI
 type StreamPayload struct {
-	TxID           string                  `json:"txid"`
-	NumInputs      int                     `json:"numInputs"`
-	NumOutputs     int                     `json:"numOutputs"`
-	TotalIn        int64                   `json:"totalIn"`
-	TotalOut       int64                   `json:"totalOut"`
-	Fee            int64                   `json:"fee"`
-	VSize          int                     `json:"vsize"`
-	PrivacyScore   int                     `json:"privacyScore"`
-	AnonSet        int                     `json:"anonSet"`
-	ProcessingTime float64                 `json:"processingTimeMs"`
-	CUDAOffloaded  bool                    `json:"cudaOffloaded"`
-	HeuristicFlags uint64                  `json:"heuristicFlags"`
-	Inference      *models.InferenceResult `json:"inference,omitempty"`
+	TxID              string                            `json:"txid"`
+	NumInputs         int                               `json:"numInputs"`
+	NumOutputs        int                               `json:"numOutputs"`
+	TotalIn           int64                             `json:"totalIn"`
+	TotalOut          int64                             `json:"totalOut"`
+	Fee               int64                             `json:"fee"`
+	VSize             int                               `json:"vsize"`
+	PrivacyScore      int                               `json:"privacyScore"`
+	AnonSet           int                               `json:"anonSet"`
+	ProcessingTime    float64                           `json:"processingTimeMs"`
+	CUDAOffloaded     bool                              `json:"cudaOffloaded"`
+	HeuristicFlags    uint64                            `json:"heuristicFlags"`
+	Inference         *models.InferenceResult           `json:"inference,omitempty"`
+	// Phase 18: Deep forensics data
+	WalletFamily      string                            `json:"walletFamily,omitempty"`
+	TaintExposure     float64                           `json:"taintExposure,omitempty"`
+	ScriptFingerprint *models.ScriptFingerprintResult   `json:"scriptFingerprint,omitempty"`
+	TemporalSignals   *models.TemporalCorrelationResult `json:"temporalSignals,omitempty"`
+	TaintAnalysis     *models.TaintResult               `json:"taintAnalysis,omitempty"`
 }
 
 func NewPoller(btcClient *bitcoin.Client, wsHub *api.Hub, dbStore *db.PostgresStore) *Poller {
@@ -61,7 +68,7 @@ func NewPoller(btcClient *bitcoin.Client, wsHub *api.Hub, dbStore *db.PostgresSt
 		btcClient: btcClient,
 		wsHub:     wsHub,
 		dbStore:   dbStore,
-		seenTXs:   make(map[string]bool),
+		seenTXs:   make(map[string]time.Time),
 		Watchlist: watchlist,
 		AlertMgr:  alertMgr,
 	}
@@ -88,7 +95,13 @@ func (p *Poller) Run(ctx context.Context) {
 			log.Println("Stopping Mempool Poller...")
 			return
 		case <-cleanupTicker.C:
-			p.seenTXs = make(map[string]bool)
+			// Time-bucketed eviction: remove entries older than 2 hours
+			cutoff := time.Now().Add(-2 * time.Hour)
+			for txid, seen := range p.seenTXs {
+				if seen.Before(cutoff) {
+					delete(p.seenTXs, txid)
+				}
+			}
 		case <-ticker.C:
 			// Fetch current mempool hashes (verbose=false)
 			mempool, err := p.btcClient.GetRawMempool()
@@ -106,11 +119,11 @@ func (p *Poller) Run(ctx context.Context) {
 			// Process up to 20 new transactions per tick to avoid lagging the node too much
 			processedCount := 0
 			for _, txidStr := range mempool {
-				if p.seenTXs[txidStr] {
+				if _, seen := p.seenTXs[txidStr]; seen {
 					continue
 				}
 
-				p.seenTXs[txidStr] = true
+				p.seenTXs[txidStr] = time.Now()
 
 				hash, err := chainhash.NewHashFromStr(txidStr)
 				if err != nil {
@@ -154,7 +167,8 @@ func (p *Poller) Run(ctx context.Context) {
 							inAddr = prevTx.Vout[vin.Vout].ScriptPubKey.Addresses[0]
 						}
 					}
-					valSats := int64(inValue * 100000000)
+					inAmt, _ := btcutil.NewAmount(inValue)
+				valSats := int64(inAmt)
 					scriptSigHex := ""
 					if vin.ScriptSig != nil {
 						scriptSigHex = vin.ScriptSig.Hex
@@ -171,7 +185,8 @@ func (p *Poller) Run(ctx context.Context) {
 				}
 
 				for i, vout := range rawTx.Vout {
-					valSats := int64(vout.Value * 100000000)
+					outAmt, _ := btcutil.NewAmount(vout.Value)
+					valSats := int64(outAmt)
 					var outAddr string
 					if len(vout.ScriptPubKey.Addresses) > 0 {
 						outAddr = vout.ScriptPubKey.Addresses[0]
@@ -192,18 +207,18 @@ func (p *Poller) Run(ctx context.Context) {
 				// Measure CUDA / Engine processing time
 				start := time.Now()
 
-				// Re-using the engine's core 28-step analysis pipeline
+				// Re-using the engine's core 30-step analysis pipeline
 				result := heuristics.AnalyzeTx(tx)
 
 				elapsed := float64(time.Since(start).Microseconds()) / 1000.0
 
-				// CUDA GPU acceleration (unconditionally enabled)
-				isCuda := true
+				// CUDA GPU offload only fires for large transactions (>15 I/O)
+				isCuda := len(tx.Inputs) > 15 || len(tx.Outputs) > 15
 
 				// ── Phase 19: Real-Time Watchlist + Risk Scoring ────────
 				watchlistHits := p.Watchlist.CheckTransaction(tx)
 				assessment := heuristics.ScoreTransaction(tx, result, watchlistHits)
-				taintLevel, _ := heuristics.CheckInputsForTaint(tx)
+				taintLevel := result.TaintExposure
 
 				// Emit alerts for medium+ severity
 				if assessment.Severity != "info" && assessment.Severity != "low" {
@@ -245,19 +260,24 @@ func (p *Poller) Run(ctx context.Context) {
 				}
 
 				payload := StreamPayload{
-					TxID:           tx.Txid,
-					NumInputs:      len(tx.Inputs),
-					NumOutputs:     len(tx.Outputs),
-					TotalIn:        totalIn,
-					TotalOut:       totalOut,
-					Fee:            fee,
-					VSize:          tx.Vsize,
-					PrivacyScore:   result.PrivacyScore,
-					AnonSet:        result.AnonSet,
-					ProcessingTime: elapsed,
-					CUDAOffloaded:  isCuda,
-					HeuristicFlags: result.HeuristicFlags,
-					Inference:      result.Inference,
+					TxID:              tx.Txid,
+					NumInputs:         len(tx.Inputs),
+					NumOutputs:        len(tx.Outputs),
+					TotalIn:           totalIn,
+					TotalOut:          totalOut,
+					Fee:               fee,
+					VSize:             tx.Vsize,
+					PrivacyScore:      result.PrivacyScore,
+					AnonSet:           result.AnonSet,
+					ProcessingTime:    elapsed,
+					CUDAOffloaded:     isCuda,
+					HeuristicFlags:    result.HeuristicFlags,
+					Inference:         result.Inference,
+					WalletFamily:      result.WalletFamily,
+					TaintExposure:     result.TaintExposure,
+					ScriptFingerprint: result.ScriptFingerprint,
+					TemporalSignals:   result.TemporalSignals,
+					TaintAnalysis:     result.TaintAnalysis,
 				}
 
 				payloadBytes, _ := json.Marshal(payload)

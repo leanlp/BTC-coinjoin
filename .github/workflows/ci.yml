@@ -2,12 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feat-*' ]
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -16,6 +20,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24.x'
+        cache: true
 
     - name: Verify dependencies
       run: go mod verify
@@ -23,5 +28,81 @@ jobs:
     - name: Build
       run: go build -v ./...
 
-    - name: Run Tests
-      run: go test -v -race -cover ./...
+    - name: Run Tests with Race Detection
+      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+    - name: Check Coverage Threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+        echo "Total coverage: ${COVERAGE}%"
+        if (( $(echo "$COVERAGE < 25" | bc -l) )); then
+          echo "❌ Coverage ${COVERAGE}% is below minimum threshold of 25%"
+          exit 1
+        fi
+        echo "✅ Coverage ${COVERAGE}% meets minimum threshold of 25%"
+
+    - name: Upload Coverage Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.out
+        retention-days: 30
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.x'
+        cache: true
+
+    - name: Install govulncheck
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+    - name: Run Vulnerability Check
+      run: govulncheck ./...
+
+    - name: Run go vet
+      run: go vet ./...
+
+  benchmark:
+    name: Pipeline Benchmark
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.x'
+        cache: true
+
+    - name: Run Benchmarks
+      run: go test -bench=. -benchmem -count=1 -run='^$' ./internal/heuristics/ 2>&1 | tee benchmark.txt || true
+
+    - name: Upload Benchmark Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark.txt
+        retention-days: 30
+
+    - name: Check Pipeline Step Count
+      run: |
+        STEPS=$(grep -c "STEP [0-9]" internal/heuristics/ssmp.go || echo "0")
+        echo "Pipeline steps: ${STEPS}"
+        if [ "$STEPS" -lt 45 ]; then
+          echo "⚠️ Expected 52+ pipeline steps, found ${STEPS}"
+        else
+          echo "✅ Pipeline has ${STEPS} steps"
+        fi
+
+    - name: Check Flag Count
+      run: |
+        FLAGS=$(grep -c "Flag[A-Z].*= 1 <<" internal/heuristics/llr_engine.go || echo "0")
+        echo "Heuristic flags: ${FLAGS}"
+        echo "✅ Engine has ${FLAGS} heuristic flag bits"

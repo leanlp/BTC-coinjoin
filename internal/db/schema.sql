@@ -227,3 +227,42 @@ CREATE TABLE IF NOT EXISTS temporal_signals (
 
 CREATE INDEX IF NOT EXISTS idx_temporal_txid ON temporal_signals (txid);
 CREATE INDEX IF NOT EXISTS idx_temporal_pattern ON temporal_signals (pattern_type);
+
+-- ============================================================
+-- Intersection Attack Engine (Phase 19)
+-- ============================================================
+-- Records which addresses participated in each CoinJoin round.
+-- This is the foundation for cross-round intersection analysis.
+CREATE TABLE IF NOT EXISTS coinjoin_participants (
+    id              BIGSERIAL PRIMARY KEY,
+    txid            VARCHAR(64) NOT NULL,           -- CoinJoin transaction ID
+    address         VARCHAR(255) NOT NULL,          -- Participant output address
+    output_value    BIGINT,                         -- Output value in satoshis
+    output_index    SMALLINT,                       -- Output index in the transaction
+    pool_id         VARCHAR(20),                    -- Denomination pool (e.g. '0.01 BTC')
+    protocol        VARCHAR(20) NOT NULL DEFAULT 'generic', -- 'wasabi'/'whirlpool'/'joinmarket'/'generic'
+    block_height    INT NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cj_participants_address ON coinjoin_participants (address);
+CREATE INDEX IF NOT EXISTS idx_cj_participants_txid ON coinjoin_participants (txid);
+CREATE INDEX IF NOT EXISTS idx_cj_participants_protocol ON coinjoin_participants (protocol);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cj_participants_unique ON coinjoin_participants (txid, address);
+
+-- Cached intersection analysis results per address.
+-- Avoids recomputing expensive set intersections on every API call.
+CREATE TABLE IF NOT EXISTS intersection_results (
+    address              VARCHAR(255) PRIMARY KEY,
+    total_rounds         INT NOT NULL DEFAULT 0,
+    effective_anonset    INT NOT NULL DEFAULT 0,
+    intersecting_addrs   JSONB,                      -- Array of addresses in the intersection
+    round_txids          TEXT[],                      -- Array of CoinJoin round txids
+    erosion_rate         REAL DEFAULT 0.0,            -- 1.0 - (effective/max_local)
+    confidence           REAL DEFAULT 0.0,
+    is_vulnerable        BOOLEAN DEFAULT FALSE,
+    last_computed        TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_intersection_vulnerable ON intersection_results (is_vulnerable) WHERE is_vulnerable = TRUE;
+

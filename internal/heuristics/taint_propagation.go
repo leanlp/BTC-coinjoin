@@ -84,7 +84,17 @@ func PropagateTaintAdvanced(tx models.Transaction, method string) models.TaintRe
 	// Collect source labels from the existing taint sources
 	// Note: the existing TaintMap doesn't store labels per-address,
 	// so we report the addresses themselves as source references.
-	result.HopsFromSource = 1 // This transaction is 1 hop from the taint source
+	// Estimate hops from source based on taint level decay
+	// Higher taint = closer to source (taint decays with each hop)
+	if result.InputTaintLevel >= 0.9 {
+		result.HopsFromSource = 1
+	} else if result.InputTaintLevel >= 0.5 {
+		result.HopsFromSource = 2
+	} else if result.InputTaintLevel >= 0.1 {
+		result.HopsFromSource = 3
+	} else {
+		result.HopsFromSource = 4
+	}
 
 	// 2. Apply the selected accounting method
 	switch method {

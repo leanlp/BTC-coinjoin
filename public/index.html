@@ -453,6 +453,19 @@
             CrossChainLinked: 1n << 43n,
             MarkovScored: 1n << 44n,
             MempoolTracked: 1n << 45n,
+
+            // Phase 20 flags
+            AddressPoisoning: 1n << 46n,
+            SelfSpend: 1n << 47n,
+            FlagConsolidation: 1n << 48n,
+            ValueFingerprint: 1n << 49n,
+            PostMixLeakageAdv: 1n << 50n,
+
+            // Phase 22 flags
+            CoinJoinDetected: 1n << 51n,
+            SanctionedEntity: 1n << 52n,
+            MixerService: 1n << 53n,
+            DepositAddress: 1n << 54n,
         };
 
         function getForensicsLabels(flagsNum) {
@@ -511,6 +524,17 @@
             if ((flags & F.CrossChainLinked) > 0n) labels.push('<span class="badge l3">Cross-Chain Link</span>');
             if ((flags & F.MarkovScored) > 0n) labels.push('<span class="badge l-risk">Markov Absorption</span>');
             if ((flags & F.MempoolTracked) > 0n) labels.push('<span class="badge l1">ZMQ Telemetry</span>');
+
+            // Phase 20 Flags
+            if ((flags & F.AddressPoisoning) > 0n) labels.push('<span class="badge l-risk">Address Poisoning</span>');
+            if ((flags & F.SelfSpend) > 0n) labels.push('<span class="badge l2">Self-Spend</span>');
+            if ((flags & F.ValueFingerprint) > 0n) labels.push('<span class="badge l2">Value Fingerprint</span>');
+
+            // Phase 22 Flags
+            if ((flags & F.CoinJoinDetected) > 0n) labels.push('<span class="badge l3">ML: CoinJoin</span>');
+            if ((flags & F.SanctionedEntity) > 0n) labels.push('<span class="badge l-risk" style="background:#dc2626;color:#fff;font-weight:900">⚠ SANCTIONED</span>');
+            if ((flags & F.MixerService) > 0n) labels.push('<span class="badge l-risk">Mixer Service</span>');
+            if ((flags & F.DepositAddress) > 0n) labels.push('<span class="badge l2">Exchange Deposit</span>');
 
             if (labels.length === 0) {
                 labels.push('<span class="badge none">Standard Tx</span>');
